@@ -1,0 +1,21 @@
+{
+  "name": "beverage-pos-system",
+  "version": "1.0.0",
+  "description": "Modern POS system for beverage shop",
+  "scripts": {
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "server:dev": "cd server && npm run dev",
+    "client:dev": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start",
+    "setup": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "googleapis": "^162.0.0",
+    "morgan": "^1.10.1"
+  }
+}
