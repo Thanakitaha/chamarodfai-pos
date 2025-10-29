@@ -7,8 +7,18 @@ DB_USER = postgres
 DB_PASSWORD = chamarodfai101
 DB_NAME = chamarodfai
 DATA_DIR = $(HOME)/docker/pgdata
+DB_HOST ?= 127.0.0.1
+DB_PORT ?= 5432
 
 .PHONY: build run stop rm logs psql
+
+db-init:
+	@echo "Applying schema to $(DB_NAME) on $(DB_HOST):$(DB_PORT)"
+	@DB_HOST=$(DB_HOST) DB_PORT=$(DB_PORT) DB_NAME=$(DB_NAME) \
+	PGHOST=$(DB_HOST) PGPORT=$(DB_PORT) PGDATABASE=$(DB_NAME) \
+	PGUSER_SUPER=$(DB_SUPER_USER) PGPASS_SUPER=$(DB_SUPER_PASS) \
+	PGUSER_APP=$(DB_APP_USER)   PGPASS_APP=$(DB_APP_PASS) \
+	node init_db.mjs
 
 # Build custom postgres image
 build:
