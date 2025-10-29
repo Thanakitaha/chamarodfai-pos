@@ -19,8 +19,6 @@ RUN npm ci --omit=dev
 # คัดลอกผล build
 COPY --from=builder /app/dist ./dist
 
-# พอร์ต API
-ENV PORT=3001
 EXPOSE 3001
 
 # Healthcheck ใช้ร่วมกับ compose (มี /api/health ในโค้ด)

@@ -576,6 +576,10 @@ LEFT JOIN pos.v_inventory_balances b
 WHERE i.low_stock_threshold > 0
   AND COALESCE(b.qty_on_hand,0) <= i.low_stock_threshold;
 
+GRANT USAGE ON SCHEMA pos TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA pos TO PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pos GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+
 -- =============================================================================
 -- End of script
 -- =============================================================================
