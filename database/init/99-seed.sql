@@ -74,7 +74,7 @@ WHERE EXISTS (
 ON CONFLICT (store_id, name) DO NOTHING;
 
 -- 5) บัญชีแอดมินตัวอย่าง (หนึ่งร้านหนึ่งอีเมล)
-INSERT INTO pos.accounts (store_id, email, password_hash, full_name, role, is_active)
+INSERT INTO pos.accounts (store_id, email, password_hash, username, role, is_active)
 SELECT s.store_id,
        'chamarodfai@gmail.com',
        '$2y$10$FXiElelg6Fbxz6gg4qa42unoIIhlIa//jkvPKYYd.WJTnpW3K/Q.W', -- bcrypt placeholder

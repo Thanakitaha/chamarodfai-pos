@@ -5,6 +5,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 
 import { pool } from './config/db';
+import authRouter from './routes/auth';
 import menu from './routes/menu';
 import orders from './routes/orders';
 import promotions from './routes/promotions';
@@ -17,6 +18,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
+app.use('/api/auth', authRouter);
 
 // ---------- Helpers ----------
 async function ping() {
