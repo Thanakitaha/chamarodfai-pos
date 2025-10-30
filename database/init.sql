@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS pos.accounts (
   store_id        BIGINT NOT NULL REFERENCES pos.stores(store_id) ON DELETE CASCADE,
   email           CITEXT NOT NULL,
   password_hash   TEXT NOT NULL,           -- เก็บ hash (argon2/bcrypt)
-  full_name       TEXT NOT NULL,
+  username       TEXT NOT NULL,
   role            pos.user_role_enum NOT NULL DEFAULT 'staff',
   is_active       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

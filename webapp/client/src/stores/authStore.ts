@@ -4,7 +4,6 @@ import * as api from '../services/api';
 type User = {
   account_id: number;
   store_id: number;
-  full_name: string;
   role: string;
   email: string;
   username?: string | null;
@@ -12,19 +11,21 @@ type User = {
 
 type AuthState = {
   user: User | null;
-  // เปลี่ยนให้รับ identifier
+  isAuthenticated: boolean;
   login: (identifier: string, password: string) => Promise<boolean>;
   logout: () => void;
 };
 
-export const useAuthStore = create<AuthState>((set) => ({
+// ✅ export แบบ named: useAuth
+export const useAuth = create<AuthState>((set) => ({
   user: null,
+  isAuthenticated: false,
 
   login: async (identifier: string, password: string) => {
     try {
       const res = await api.login(identifier, password);
-      if (res?.success) {
-        set({ user: res.data as User });
+      if (res?.success && res.data) {
+        set({ user: res.data as User, isAuthenticated: true });
         return true;
       }
     } catch (e) {
@@ -33,5 +34,5 @@ export const useAuthStore = create<AuthState>((set) => ({
     return false;
   },
 
-  logout: () => set({ user: null })
+  logout: () => set({ user: null, isAuthenticated: false }),
 }));

@@ -18,12 +18,12 @@ interface UnifiedAPI {
   };
   order: {
     getAll: () => Promise<ApiResponse<Order[]>>;
-    create: (order: Omit<Order, 'id'|'createdAt'|'updatedAt'>) => Promise<ApiResponse<Order>>;
+    create: (order: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>) => Promise<ApiResponse<Order>>;
+    getNextOrderNumber: () => Promise<ApiResponse<{ orderNumber: string }>>;
   };
   report: {
-    getDaily: (date: string) => Promise<ApiResponse<SalesReport>>;
-    getMonthly: (year: number, month: number) => Promise<ApiResponse<SalesReport>>;
-    getTrends: () => Promise<ApiResponse<any[]>>;
+    getSalesReport: (period: string, date?: string) => Promise<ApiResponse<SalesReport>>;
+    getTrendData: (days?: number) => Promise<ApiResponse<{ date: string; revenue: number; orders: number }[]>>;
   };
 }
 

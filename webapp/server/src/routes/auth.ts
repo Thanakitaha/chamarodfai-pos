@@ -7,7 +7,7 @@ const router = Router();
 /**
  * POST /api/auth/login
  * body: { identifier: string, password: string }
- * success: { success:true, data:{ account_id, store_id, full_name, role, email, username } }
+ * success: { success:true, data:{ account_id, store_id,  role, email, username } }
  */
 router.post('/login', async (req, res) => {
   try {
@@ -18,7 +18,7 @@ router.post('/login', async (req, res) => {
 
     // อนุญาตทั้ง email หรือ username (ไม่สนเคส)
     const sql = `
-      SELECT account_id, store_id, email, username, password_hash, full_name, role, is_active
+      SELECT account_id, store_id, email, username, password_hash,  role, is_active
       FROM pos.accounts
       WHERE (LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1))
       LIMIT 1
@@ -39,8 +39,8 @@ router.post('/login', async (req, res) => {
     }
 
     // (ถ้าต้องการ JWT ให้ต่อเพิ่มได้; ตอนนี้คืนโปรไฟล์)
-    const { account_id, store_id, full_name, role, email, username } = acc;
-    return res.json({ success:true, data:{ account_id, store_id, full_name, role, email, username } });
+    const { account_id, store_id,  role, email, username } = acc;
+    return res.json({ success:true, data:{ account_id, store_id,  role, email, username } });
   } catch (err:any) {
     console.error(err);
     return res.status(500).json({ success:false, message: 'Auth error' });
