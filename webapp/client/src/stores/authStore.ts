@@ -1,41 +1,37 @@
 import { create } from 'zustand';
+import * as api from '../services/api';
 
 type User = {
   account_id: number;
   store_id: number;
   full_name: string;
-  role: 'owner'|'staff';
+  role: string;
   email: string;
+  username?: string | null;
 };
 
 type AuthState = {
   user: User | null;
-  isLoggedIn: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
+  // เปลี่ยนให้รับ identifier
+  login: (identifier: string, password: string) => Promise<boolean>;
   logout: () => void;
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
-  isLoggedIn: false,
 
-  login: async (email: string, password: string) => {
+  login: async (identifier: string, password: string) => {
     try {
-      const resp = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const json = await resp.json();
-      if (!resp.ok || !json?.success) return false;
-
-      set({ user: json.data as User, isLoggedIn: true });
-      return true;
+      const res = await api.login(identifier, password);
+      if (res?.success) {
+        set({ user: res.data as User });
+        return true;
+      }
     } catch (e) {
       console.error(e);
-      return false;
     }
+    return false;
   },
 
-  logout: () => set({ user: null, isLoggedIn: false }),
+  logout: () => set({ user: null })
 }));

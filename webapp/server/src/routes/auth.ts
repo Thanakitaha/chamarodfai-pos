@@ -6,34 +6,41 @@ const router = Router();
 
 /**
  * POST /api/auth/login
- * body: { email: string, password: string }
- * success: { success:true, data:{ account_id, store_id, full_name, role, email } }
+ * body: { identifier: string, password: string }
+ * success: { success:true, data:{ account_id, store_id, full_name, role, email, username } }
  */
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Missing email or password' });
+    const { identifier, password } = req.body || {};
+    if (!identifier || !password) {
+      return res.status(400).json({ success: false, message: 'Missing identifier or password' });
     }
 
-    const q = `
-      SELECT account_id, store_id, full_name, role, email, password_hash, is_active
+    // อนุญาตทั้ง email หรือ username (ไม่สนเคส)
+    const sql = `
+      SELECT account_id, store_id, email, username, password_hash, full_name, role, is_active
       FROM pos.accounts
-      WHERE LOWER(email) = LOWER($1)
+      WHERE (LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1))
       LIMIT 1
     `;
-    const { rows } = await pool.query(q, [email]);
-    if (!rows.length) return res.status(401).json({ success:false, message:'Invalid credentials' });
+    const { rows } = await pool.query(sql, [identifier]);
+    if (rows.length === 0) {
+      return res.status(401).json({ success:false, message:'Invalid credentials' });
+    }
 
     const acc = rows[0];
-    if (!acc.is_active) return res.status(403).json({ success:false, message:'Account disabled' });
+    if (!acc.is_active) {
+      return res.status(403).json({ success:false, message:'Account inactive' });
+    }
 
     const ok = await bcrypt.compare(password, acc.password_hash);
-    if (!ok) return res.status(401).json({ success:false, message:'Invalid credentials' });
+    if (!ok) {
+      return res.status(401).json({ success:false, message:'Invalid credentials' });
+    }
 
-    // (ถ้าจะทำ JWT ก็ต่อจากนี้—ตอนนี้ส่งโปรไฟล์พอ)
-    const { account_id, store_id, full_name, role } = acc;
-    return res.json({ success:true, data:{ account_id, store_id, full_name, role, email: acc.email } });
+    // (ถ้าต้องการ JWT ให้ต่อเพิ่มได้; ตอนนี้คืนโปรไฟล์)
+    const { account_id, store_id, full_name, role, email, username } = acc;
+    return res.json({ success:true, data:{ account_id, store_id, full_name, role, email, username } });
   } catch (err:any) {
     console.error(err);
     return res.status(500).json({ success:false, message: 'Auth error' });

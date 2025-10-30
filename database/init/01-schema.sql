@@ -271,6 +271,10 @@ CREATE TABLE IF NOT EXISTS pos.expenses (
 -- ============================================================================
 -- Indexes
 -- ============================================================================
+CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_store_username
+  ON pos.accounts (store_id, username)
+  WHERE username IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_orders_store_status_created
   ON pos.orders (store_id, status, created_at DESC);
 

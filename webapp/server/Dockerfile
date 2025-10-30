@@ -2,7 +2,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN if [ -f package-lock.json ]; then npm install --legacy-peer-deps; else npm install --no-package-lock --legacy-peer-deps; fi
 COPY tsconfig.json ./tsconfig.json
 COPY src ./src
 RUN npm run build
@@ -12,12 +12,9 @@ FROM node:20-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 
-# ติดตั้งเฉพาะ prod deps
-COPY package*.json ./
-RUN npm ci --omit=dev
-
-# คัดลอกผล build
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+COPY package.json ./
 
 EXPOSE 3001
 

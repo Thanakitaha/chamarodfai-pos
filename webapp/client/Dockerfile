@@ -4,7 +4,7 @@ WORKDIR /app
 ARG VITE_USE_SHEETS=false
 ENV VITE_USE_SHEETS=${VITE_USE_SHEETS}
 COPY package*.json ./
-RUN npm ci
+RUN if [ -f package-lock.json ]; then npm install --legacy-peer-deps; else npm install --no-package-lock --legacy-peer-deps; fi
 COPY . .
 # สร้างไฟล์ env ให้ Vite
 RUN echo "VITE_USE_SHEETS=${VITE_USE_SHEETS}" > .env.production

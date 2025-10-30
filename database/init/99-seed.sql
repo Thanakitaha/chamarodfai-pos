@@ -73,16 +73,18 @@ WHERE EXISTS (
 )
 ON CONFLICT (store_id, name) DO NOTHING;
 
--- 5) บัญชีแอดมินตัวอย่าง (หนึ่งร้านหนึ่งอีเมล)
-INSERT INTO pos.accounts (store_id, email, password_hash, username, role, is_active)
+-- 5) บัญชีแอดมินตัวอย่าง (หนึ่งร้านหนึ่งอีเมล/ยูสเซอร์เนม)
+INSERT INTO pos.accounts (store_id, email, username, password_hash, full_name, role, is_active)
 SELECT s.store_id,
        'chamarodfai@gmail.com',
-       '$2y$10$FXiElelg6Fbxz6gg4qa42unoIIhlIa//jkvPKYYd.WJTnpW3K/Q.W', -- bcrypt placeholder
+       'admin',
+       '$2y$10$FXiElelg6Fbxz6gg4qa42unoIIhlIa//jkvPKYYd.WJTnpW3K/Q.W',
        'Admin', 'owner', TRUE
 FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s
 WHERE NOT EXISTS (
   SELECT 1 FROM pos.accounts a
-  WHERE a.store_id = s.store_id AND a.email = 'chamarodfai@gmail.com'
+  WHERE a.store_id = s.store_id
+    AND (a.email = 'chamarodfai@gmail.com' OR a.username = 'admin')
 );
 
 -- 6) โปรโมชันตัวอย่าง

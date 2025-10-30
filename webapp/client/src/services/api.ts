@@ -10,6 +10,16 @@ const api = axios.create({
   },
 });
 
+// Login API
+export async function login(identifier: string, password: string) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier, password })
+  });
+  return handle(res);
+}
+
 // Menu Items API
 export const menuAPI = {
   getAll: () => api.get<ApiResponse<MenuItem[]>>('/menu-items'),
