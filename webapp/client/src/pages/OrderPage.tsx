@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Minus, Trash2, ShoppingCart, Receipt } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { orderAPI } from '../services/api';
 import { useCartStore } from '../stores/cartStore';
 import apiConfig from '../services/api-config';
 import { MenuItem, Promotion } from '../types';
@@ -14,7 +15,8 @@ const OrderPage: React.FC = () => {
   const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);       // ใช้ร่วมกับ isSubmitting
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
     items,
@@ -32,6 +34,7 @@ const OrderPage: React.FC = () => {
   useEffect(() => {
     fetchMenuItems();
     fetchPromotions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchMenuItems = async () => {
@@ -40,7 +43,7 @@ const OrderPage: React.FC = () => {
       if (response.success && response.data) {
         setMenuItems(response.data);
       }
-    } catch (error) {
+    } catch {
       toast.error('ไม่สามารถโหลดเมนูได้');
     }
   };
@@ -51,14 +54,14 @@ const OrderPage: React.FC = () => {
       if (response.success && response.data) {
         setPromotions(response.data.filter((p: Promotion) => p.active));
       }
-    } catch (error) {
+    } catch {
       toast.error('ไม่สามารถโหลดโปรโมชั่นได้');
     }
   };
 
   const categories = ['ทั้งหมด', ...Array.from(new Set(menuItems.map(item => item.category)))];
-  
-  const filteredMenuItems = selectedCategory === 'ทั้งหมด' 
+
+  const filteredMenuItems = selectedCategory === 'ทั้งหมด'
     ? menuItems.filter(item => item.available)
     : menuItems.filter(item => item.category === selectedCategory && item.available);
 
@@ -71,40 +74,42 @@ const OrderPage: React.FC = () => {
   };
 
   const handleConfirmPayment = async () => {
-    setLoading(true);
     try {
-      const orderData = {
-        items: items.map(item => {
-          const menuItem = menuItems.find(m => m.id === item.menuItemId);
-          return {
-            id: `item-${Date.now()}-${Math.random()}`, // temporary ID for frontend
-            menuItemId: item.menuItemId,
-            menuItemName: menuItem?.name || '',
-            quantity: item.quantity,
-            price: item.price,
-            subtotal: item.subtotal,
-          };
-        }),
-        subtotal,
-        discount,
-        promotionId: selectedPromotion?.id,
-        total,
-        status: 'completed' as const,
+      setShowPaymentConfirmation(false);
+      setIsSubmitting(true);
+      setLoading(true);
+
+      const { items: cartItems, selectedPromotion: promo } = useCartStore.getState();
+      if (cartItems.length === 0) {
+        toast.error('ไม่มีรายการสินค้า');
+        return;
+      }
+
+      const payload = {
+        items: cartItems.map(it => ({
+          menuItemId: Number(it.menuItemId),
+          price: Number(it.price),
+          quantity: Number(it.quantity),
+        })),
+        promotionId: promo ? Number(promo.id) : null,
+        taxAmount: 0,
+        serviceCharge: 0,
+        status: 'paid' as const, // ให้เป็น literal type
       };
 
-      const response = await apiConfig.order.create(orderData);
-      if (response.success && response.data) {
-        setCompletedOrder(response.data);
-        setShowPaymentConfirmation(false);
-        setShowReceipt(true);
-        clearCart();
-        toast.success('ชำระเงินสำเร็จ!');
-      } else {
-        toast.error(response.message || 'เกิดข้อผิดพลาดในการสร้างออเดอร์');
+      const res = await orderAPI.create(payload);
+      if (!res.success) {
+        throw new Error(res.error || 'สร้างออเดอร์ไม่สำเร็จ');
       }
-    } catch (error) {
-      toast.error('เกิดข้อผิดพลาดในการชำระเงิน');
+
+      toast.success('ชำระเงินสำเร็จ');
+      useCartStore.getState().clearCart();
+      setCompletedOrder(res.data ?? null);
+      setShowReceipt(!!res.data);
+    } catch (err: any) {
+      toast.error(err.message || 'เกิดข้อผิดพลาด');
     } finally {
+      setIsSubmitting(false);
       setLoading(false);
     }
   };
@@ -115,7 +120,7 @@ const OrderPage: React.FC = () => {
       <div className="flex-1 order-2 lg:order-1">
         <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
           <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">เมนูเครื่องดื่ม</h2>
-          
+
           {/* Category Filter */}
           <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto pb-2">
             {categories.map(category => (
@@ -170,7 +175,7 @@ const OrderPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Cart Section - Mobile: Fixed at top, Desktop: Sidebar */}
+      {/* Cart Section */}
       <div className="w-full lg:w-80 xl:w-96 order-1 lg:order-2">
         <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6 lg:sticky lg:top-6">
           <div className="flex items-center gap-2 mb-4 sm:mb-6">
@@ -190,19 +195,21 @@ const OrderPage: React.FC = () => {
                 {items.map(item => (
                   <div key={item.id} className="flex items-center gap-2 sm:gap-3 p-2 sm:p-3 bg-gray-50 rounded-lg">
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-medium text-gray-800 text-sm sm:text-base line-clamp-1">{item.menuItem?.name}</h4>
-                      <p className="text-xs sm:text-sm text-gray-600">฿{item.price.toFixed(2)}</p>
+                      <h4 className="font-medium text-gray-800 text-sm sm:text-base line-clamp-1">
+                        {item.menuItem?.name ?? `เมนู #${item.menuItemId}`}
+                      </h4>
+                      <p className="text-xs sm:text-sm text-gray-600">฿{Number(item.price).toFixed(2)}</p>
                     </div>
                     <div className="flex items-center gap-1 sm:gap-2">
                       <button
-                        onClick={() => updateQuantity(item.menuItemId, item.quantity - 1)}
+                        onClick={() => updateQuantity(item.menuItemId, Number(item.quantity) - 1)}
                         className="p-1 text-gray-600 hover:text-gray-800"
                       >
                         <Minus className="w-3 h-3 sm:w-4 sm:h-4" />
                       </button>
                       <span className="font-medium w-6 sm:w-8 text-center text-sm sm:text-base">{item.quantity}</span>
                       <button
-                        onClick={() => updateQuantity(item.menuItemId, item.quantity + 1)}
+                        onClick={() => updateQuantity(item.menuItemId, Number(item.quantity) + 1)}
                         className="p-1 text-gray-600 hover:text-gray-800"
                       >
                         <Plus className="w-3 h-3 sm:w-4 sm:h-4" />
@@ -224,16 +231,16 @@ const OrderPage: React.FC = () => {
                   โปรโมชั่น
                 </label>
                 <select
-                  value={selectedPromotion?.id || ''}
+                  value={selectedPromotion ? String(selectedPromotion.id) : ''}
                   onChange={(e) => {
-                    const promo = promotions.find(p => p.id === e.target.value);
+                    const promo = promotions.find(p => String(p.id) === e.target.value);
                     applyPromotion(promo);
                   }}
                   className="w-full p-2 sm:p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm sm:text-base"
                 >
                   <option value="">ไม่ใช้โปรโมชั่น</option>
                   {promotions.map(promo => (
-                    <option key={promo.id} value={promo.id}>
+                    <option key={String(promo.id)} value={String(promo.id)}>
                       {promo.name}
                     </option>
                   ))}
@@ -263,6 +270,7 @@ const OrderPage: React.FC = () => {
               <div className="space-y-2 sm:space-y-3">
                 <button
                   onClick={handlePayment}
+                  disabled={isSubmitting}
                   className="w-full btn-primary flex items-center justify-center gap-2 py-2.5 sm:py-3 text-sm sm:text-base"
                 >
                   <Receipt className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -270,6 +278,7 @@ const OrderPage: React.FC = () => {
                 </button>
                 <button
                   onClick={clearCart}
+                  disabled={isSubmitting}
                   className="w-full btn-secondary py-2 sm:py-2.5 text-sm sm:text-base"
                 >
                   ล้างรายการ
@@ -290,7 +299,7 @@ const OrderPage: React.FC = () => {
           promotion={selectedPromotion}
           onConfirm={handleConfirmPayment}
           onCancel={() => setShowPaymentConfirmation(false)}
-          loading={loading}
+          loading={loading || isSubmitting}
         />
       )}
 

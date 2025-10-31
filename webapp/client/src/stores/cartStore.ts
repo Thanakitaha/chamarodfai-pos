@@ -1,21 +1,49 @@
 import { create } from 'zustand';
-import { MenuItem, OrderItem, Promotion } from '../types';
+import type { MenuItem, Promotion } from '../types';
+
+/** ใช้ชนิดภายใน store เพื่อไม่ชนกับ OrderItem กลางที่บางที่กำหนด field อื่นเพิ่ม */
+export type CartItem = {
+  id: number;           // ใช้ menuItemId เป็น key
+  menuItemId: number;
+  price: number;
+  quantity: number;
+  menuItem?: MenuItem;  // เก็บเมนูไว้โชว์ชื่อได้
+};
+
+function computePromotionDiscount(subtotal: number, promo?: Promotion): number {
+  if (!promo) return 0;
+  if (!promo.active) return 0;
+  const now = new Date();
+  if (promo.startDate && new Date(promo.startDate) > now) return 0;
+  if (promo.endDate && new Date(promo.endDate) < now) return 0;
+  if (promo.minOrderAmount && subtotal < promo.minOrderAmount) return 0;
+  return promo.discountType === 'percentage'
+    ? Math.max(0, (subtotal * promo.discountValue) / 100)
+    : Math.min(subtotal, Math.max(0, promo.discountValue));
+}
 
 interface CartStore {
-  items: OrderItem[];
+  items: CartItem[];
   selectedPromotion?: Promotion;
   subtotal: number;
   discount: number;
   total: number;
-  
+
   addItem: (item: MenuItem) => void;
-  removeItem: (id: string) => void;
-  updateQuantity: (id: string, quantity: number) => void;
+  removeItem: (menuItemId: number) => void;
+  updateQuantity: (menuItemId: number, quantity: number) => void;
   clearCart: () => void;
   applyPromotion: (promotion?: Promotion) => void;
 }
 
-export const useCartStore = create<CartStore>((set) => ({
+const recalc = (items: CartItem[], promo?: Promotion) => {
+  const subtotal = items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
+  const discount = computePromotionDiscount(subtotal, promo);
+  const total = Math.max(0, subtotal - discount);
+  return { subtotal, discount, total };
+};
+
+export const useCartStore = create<CartStore>((set, get) => ({
   items: [],
   selectedPromotion: undefined,
   subtotal: 0,
@@ -23,135 +51,42 @@ export const useCartStore = create<CartStore>((set) => ({
   total: 0,
 
   addItem: (item) => {
-    set((state) => {
-      const existingItem = state.items.find(cartItem => cartItem.id === item.id);
-      let newItems;
-      
-      if (existingItem) {
-        newItems = state.items.map(cartItem =>
-          cartItem.id === item.id
-            ? { ...cartItem, quantity: cartItem.quantity + 1, subtotal: (cartItem.quantity + 1) * cartItem.price }
-            : cartItem
-        );
-      } else {
-        const orderItem: OrderItem = {
-          id: item.id,
-          menuItemId: item.id,
-          menuItem: item,
-          quantity: 1,
-          price: item.price,
-          subtotal: item.price,
-        };
-        newItems = [...state.items, orderItem];
-      }
-
-      const subtotal = newItems.reduce((sum, cartItem) => sum + cartItem.subtotal, 0);
-      const discount = state.selectedPromotion?.discountType === 'fixed' 
-        ? Math.min(state.selectedPromotion.discountValue, subtotal)
-        : state.selectedPromotion?.discountType === 'percentage'
-        ? subtotal * (state.selectedPromotion.discountValue / 100)
-        : 0;
-      const total = subtotal - discount;
-
-      return {
-        items: newItems,
-        subtotal,
-        discount,
-        total,
-      };
-    });
+    const menuItemId = Number(item.id);
+    const exists = get().items.find((x) => x.menuItemId === menuItemId);
+    let items: CartItem[];
+    if (exists) {
+      items = get().items.map((x) =>
+        x.menuItemId === menuItemId ? { ...x, quantity: x.quantity + 1 } : x
+      );
+    } else {
+      items = [
+        ...get().items,
+        { id: menuItemId, menuItemId, price: Number(item.price), quantity: 1, menuItem: item },
+      ];
+    }
+    const { selectedPromotion } = get();
+    set({ items, ...recalc(items, selectedPromotion) });
   },
 
-  removeItem: (id) => {
-    set((state) => {
-      const newItems = state.items.filter(item => item.id !== id);
-      const subtotal = newItems.reduce((sum, item) => sum + item.subtotal, 0);
-      const discount = state.selectedPromotion?.discountType === 'fixed' 
-        ? Math.min(state.selectedPromotion.discountValue, subtotal)
-        : state.selectedPromotion?.discountType === 'percentage'
-        ? subtotal * (state.selectedPromotion.discountValue / 100)
-        : 0;
-      const total = subtotal - discount;
-
-      return {
-        items: newItems,
-        subtotal,
-        discount,
-        total,
-      };
-    });
+  removeItem: (menuItemId) => {
+    const items = get().items.filter((x) => x.menuItemId !== menuItemId);
+    const { selectedPromotion } = get();
+    set({ items, ...recalc(items, selectedPromotion) });
   },
 
-  updateQuantity: (id, quantity) => {
-    set((state) => {
-      const newItems = quantity <= 0 
-        ? state.items.filter(item => item.id !== id)
-        : state.items.map(item =>
-            item.id === id ? { ...item, quantity, subtotal: quantity * item.price } : item
-          );
-      
-      const subtotal = newItems.reduce((sum, item) => sum + item.subtotal, 0);
-      const discount = state.selectedPromotion?.discountType === 'fixed' 
-        ? Math.min(state.selectedPromotion.discountValue, subtotal)
-        : state.selectedPromotion?.discountType === 'percentage'
-        ? subtotal * (state.selectedPromotion.discountValue / 100)
-        : 0;
-      const total = subtotal - discount;
-
-      return {
-        items: newItems,
-        subtotal,
-        discount,
-        total,
-      };
-    });
+  updateQuantity: (menuItemId, quantity) => {
+    let items = get().items.map((x) => (x.menuItemId === menuItemId ? { ...x, quantity } : x));
+    items = items.filter((x) => x.quantity > 0);
+    const { selectedPromotion } = get();
+    set({ items, ...recalc(items, selectedPromotion) });
   },
 
   clearCart: () => {
-    set({
-      items: [],
-      selectedPromotion: undefined,
-      subtotal: 0,
-      discount: 0,
-      total: 0,
-    });
+    set({ items: [], selectedPromotion: undefined, subtotal: 0, discount: 0, total: 0 });
   },
 
   applyPromotion: (promotion) => {
-    set((state) => {
-      const subtotal = state.subtotal;
-      const discount = promotion?.discountType === 'fixed' 
-        ? Math.min(promotion.discountValue, subtotal)
-        : promotion?.discountType === 'percentage'
-        ? subtotal * (promotion.discountValue / 100)
-        : 0;
-      const total = subtotal - discount;
-
-      return {
-        selectedPromotion: promotion,
-        discount,
-        total,
-      };
-    });
+    const items = get().items;
+    set({ selectedPromotion: promotion, ...recalc(items, promotion) });
   },
-}));
-
-interface AppStore {
-  currentPage: string;
-  isLoading: boolean;
-  error?: string;
-
-  setCurrentPage: (page: string) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error?: string) => void;
-}
-
-export const useAppStore = create<AppStore>((set) => ({
-  currentPage: 'order',
-  isLoading: false,
-  error: undefined,
-
-  setCurrentPage: (page: string) => set({ currentPage: page }),
-  setLoading: (loading: boolean) => set({ isLoading: loading }),
-  setError: (error?: string) => set({ error }),
 }));

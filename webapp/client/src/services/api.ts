@@ -1,55 +1,79 @@
 import axios from 'axios';
-import { MenuItem, Promotion, Order, SalesReport, ApiResponse } from '../types';
+import type { ApiResponse } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
 });
 
-// helper: unwrap AxiosResponse<ApiResponse<T>> -> ApiResponse<T>
-const unwrap = async <T>(p: Promise<import('axios').AxiosResponse<ApiResponse<T>>>)
-  : Promise<ApiResponse<T>> => (await p).data;
+const unwrap = async <T>(
+  p: Promise<import('axios').AxiosResponse<ApiResponse<T>>>
+): Promise<ApiResponse<T>> => (await p).data;
 
-// ===== Auth =====
-export async function login(identifier: string, password: string): Promise<ApiResponse<any>> {
-  return unwrap(api.post<ApiResponse<any>>('/auth/login', { identifier, password }));
-}
+/* ===================== AUTH ===================== */
+// ส่งแบบ form-urlencoded กันเหนียว กรณี backend ไม่ parse JSON
+export const authAPI = {
+  login: async (payload: { identifier: string; password: string }) => {
+    const form = new URLSearchParams();
+    form.set('identifier', payload.identifier?.trim() ?? '');
+    form.set('password', payload.password ?? '');
 
-// ===== Menu =====
-export const menuAPI = {
-  getAll: () => unwrap<MenuItem[]>(api.get('/menu-items')),
-  create: (item: Omit<MenuItem, 'id' | 'createdAt' | 'updatedAt'>) =>
-    unwrap<MenuItem>(api.post('/menu-items', item)),
-  update: (id: string, item: Partial<MenuItem>) =>
-    unwrap<MenuItem>(api.put(`/menu-items/${id}`, item)),
-  delete: (id: string) =>
-    unwrap<void>(api.delete(`/menu-items/${id}`)),
+    const res = await api.post<ApiResponse<{ token: string }>>('/auth/login', form.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    return res.data;
+  },
+
+  me: () => unwrap<{ username: string; role: string; email?: string }>(api.get('/auth/me')),
+  logout: () => unwrap<{}>(api.post('/auth/logout', {})),
 };
 
-// ===== Promotion =====
-export const promotionAPI = {
-  getAll: () => unwrap<Promotion[]>(api.get('/promotions')),
-};
-
-// ===== Order =====
+/* ===================== ORDERS ===================== */
 export const orderAPI = {
-  getAll: () => unwrap<Order[]>(api.get('/orders')),
-  // ✅ ฝั่ง client ไม่ต้องส่ง orderNumber (ให้ backend สร้าง)
-  create: (order: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt'>) =>
-    unwrap<Order>(api.post('/orders', order)),
-  getNextOrderNumber: () =>
-    unwrap<{ orderNumber: string }>(api.get('/orders/next-number')),
+  create: (payload: {
+    items: { menuItemId: number; price: number; quantity: number }[];
+    promotionId?: number | null;
+    taxAmount?: number;
+    serviceCharge?: number;
+    status: 'open' | 'paid';
+  }) => unwrap<{ id: number; orderNumber: string }>(api.post('/orders', payload)),
+
+  getAll: () => unwrap<any[]>(api.get('/orders')),
+  getNextOrderNumber: () => unwrap<{ orderNumber: string }>(api.get('/orders/next-number')),
 };
 
-// ===== Report =====
-export const reportAPI = {
-  getSalesReport: (period: string, date?: string) =>
-    unwrap<SalesReport>(api.get('/reports/sales', { params: { period, date } })),
-  // ถ้ามี endpoint trends ที่ backend: /reports/trends?days=7
-  getTrendData: (days: number = 7) =>
-    unwrap<{ date: string; revenue: number; orders: number }[]>(
-      api.get('/reports/trends', { params: { days } })
-    ),
+// ===== Promotions =====
+export const promotionAPI = {
+  list: (onlyActive: boolean = false) =>
+    unwrap<Promotion[]>(api.get('/promotions', { params: { onlyActive } })),
+
+  create: (body: {
+    name: string;
+    description?: string;
+    discountType: 'percentage' | 'fixed';
+    discountValue: number;
+    minOrderAmount?: number;
+    startDate: string;
+    endDate: string;
+    active?: boolean;
+  }) => unwrap<{ id: number }>(api.post('/promotions', body)),
+
+  update: (id: number, body: {
+    name: string;
+    description?: string;
+    discountType: 'percentage' | 'fixed';
+    discountValue: number;
+    minOrderAmount?: number;
+    startDate: string;
+    endDate: string;
+    active?: boolean;
+  }) => unwrap<{ message: string }>(api.put(`/promotions/${id}`, body)),
+
+  remove: (id: number) =>
+    unwrap<{ message: string }>(api.delete(`/promotions/${id}`)),
+
+  toggle: (id: number) =>
+    unwrap<{ active: boolean }>(api.patch(`/promotions/${id}/toggle`, {})),
 };
 
 export default api;

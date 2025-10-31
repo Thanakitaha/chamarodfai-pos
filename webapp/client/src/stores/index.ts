@@ -1,2 +1,2 @@
-export { useAuth } from './authStore';
-export { useCartStore, useAppStore } from './cartStore';
+export { useCartStore } from './cartStore';
+export { useAuth as useAuthStore } from './authStore';

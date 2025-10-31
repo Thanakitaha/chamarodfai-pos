@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import * as api from '../services/api';
+import { authAPI } from '../services/api';
 
 type User = {
   account_id: number;
@@ -16,17 +16,23 @@ type AuthState = {
   logout: () => void;
 };
 
-// ✅ export แบบ named: useAuth
 export const useAuth = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
 
-  login: async (identifier: string, password: string) => {
+  login: async (identifier, password) => {
+    if (!identifier?.trim() || !password) {
+      // กันตั้งแต่ client
+      return false;
+    }
     try {
-      const res = await api.login(identifier, password);
-      if (res?.success && res.data) {
-        set({ user: res.data as User, isAuthenticated: true });
-        return true;
+      const res = await authAPI.login({ identifier, password });
+      if (res?.success) {
+        const me = await authAPI.me();
+        if (me?.success && me.data) {
+          set({ user: me.data as unknown as User, isAuthenticated: true });
+          return true;
+        }
       }
     } catch (e) {
       console.error(e);
