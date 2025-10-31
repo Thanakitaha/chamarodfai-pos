@@ -242,6 +242,20 @@ CREATE TABLE IF NOT EXISTS pos.stock_movements (
 );
 
 -- ============================================================================
+-- Sessions
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS pos.sessions (
+  session_id   BIGSERIAL PRIMARY KEY,
+  store_id     BIGINT NOT NULL,
+  account_id   BIGINT NOT NULL REFERENCES pos.accounts(account_id) ON DELETE CASCADE,
+  token        TEXT NOT NULL UNIQUE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_token      ON pos.sessions(token);
+CREATE INDEX IF NOT EXISTS idx_sessions_account_id ON pos.sessions(account_id);
+
+-- ============================================================================
 -- Expenses (non-inventory)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS pos.expense_categories (

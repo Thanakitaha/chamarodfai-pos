@@ -1,84 +1,82 @@
 import { create } from 'zustand';
 import type { MenuItem, Promotion } from '../types';
 
-/** ใช้ชนิดภายใน store เพื่อไม่ชนกับ OrderItem กลางที่บางที่กำหนด field อื่นเพิ่ม */
 export type CartItem = {
-  id: number;           // ใช้ menuItemId เป็น key
+  id: number;
   menuItemId: number;
   price: number;
   quantity: number;
-  menuItem?: MenuItem;  // เก็บเมนูไว้โชว์ชื่อได้
+  menuItem?: MenuItem;
 };
 
+// webapp/client/src/stores/cartStore.ts (เฉพาะฟังก์ชันนี้)
 function computePromotionDiscount(subtotal: number, promo?: Promotion): number {
   if (!promo) return 0;
   if (!promo.active) return 0;
+
   const now = new Date();
-  if (promo.startDate && new Date(promo.startDate) > now) return 0;
-  if (promo.endDate && new Date(promo.endDate) < now) return 0;
-  if (promo.minOrderAmount && subtotal < promo.minOrderAmount) return 0;
-  return promo.discountType === 'percentage'
-    ? Math.max(0, (subtotal * promo.discountValue) / 100)
-    : Math.min(subtotal, Math.max(0, promo.discountValue));
+  if (promo.startDate && now < new Date(promo.startDate)) return 0;
+  if (promo.endDate && now > new Date(promo.endDate)) return 0;
+  if (promo.minOrderAmount && subtotal < Number(promo.minOrderAmount)) return 0;
+
+  // ✅ เทียบแบบ string เพื่อให้รองรับทั้ง 'percentage' และ 'percent' โดยไม่ชน union
+  const dt = String((promo as any).discountType).toLowerCase();
+  const isPercent = dt === 'percentage' || dt === 'percent';
+
+  if (isPercent) {
+    return Math.max(0, (subtotal * Number(promo.discountValue)) / 100);
+  }
+  // fixed
+  return Math.min(subtotal, Math.max(0, Number(promo.discountValue)));
 }
 
-interface CartStore {
+function recalc(items: CartItem[], promo?: Promotion) {
+  const subtotal = items.reduce((s, it) => s + it.price * it.quantity, 0);
+  const discount = computePromotionDiscount(subtotal, promo);
+  const total = Math.max(0, subtotal - discount);
+  return { subtotal, discount, total };
+}
+
+type CartState = {
   items: CartItem[];
   selectedPromotion?: Promotion;
   subtotal: number;
   discount: number;
   total: number;
-
-  addItem: (item: MenuItem) => void;
+  addItem: (menuItem: MenuItem) => void;
   removeItem: (menuItemId: number) => void;
   updateQuantity: (menuItemId: number, quantity: number) => void;
   clearCart: () => void;
   applyPromotion: (promotion?: Promotion) => void;
-}
-
-const recalc = (items: CartItem[], promo?: Promotion) => {
-  const subtotal = items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
-  const discount = computePromotionDiscount(subtotal, promo);
-  const total = Math.max(0, subtotal - discount);
-  return { subtotal, discount, total };
 };
 
-export const useCartStore = create<CartStore>((set, get) => ({
+export const useCartStore = create<CartState>((set, get) => ({
   items: [],
   selectedPromotion: undefined,
   subtotal: 0,
   discount: 0,
   total: 0,
 
-  addItem: (item) => {
-    const menuItemId = Number(item.id);
-    const exists = get().items.find((x) => x.menuItemId === menuItemId);
-    let items: CartItem[];
-    if (exists) {
-      items = get().items.map((x) =>
-        x.menuItemId === menuItemId ? { ...x, quantity: x.quantity + 1 } : x
-      );
-    } else {
-      items = [
-        ...get().items,
-        { id: menuItemId, menuItemId, price: Number(item.price), quantity: 1, menuItem: item },
-      ];
-    }
+  addItem: (menuItem) => {
+    const list = get().items.slice();
+    const idx = list.findIndex((x) => x.menuItemId === Number(menuItem.id));
+    if (idx >= 0) list[idx] = { ...list[idx], quantity: list[idx].quantity + 1 };
+    else list.push({ id: Number(menuItem.id), menuItemId: Number(menuItem.id), price: menuItem.price, quantity: 1, menuItem });
     const { selectedPromotion } = get();
-    set({ items, ...recalc(items, selectedPromotion) });
+    set({ items: list, ...recalc(list, selectedPromotion) });
   },
 
   removeItem: (menuItemId) => {
-    const items = get().items.filter((x) => x.menuItemId !== menuItemId);
+    const list = get().items.filter((x) => x.menuItemId !== menuItemId);
     const { selectedPromotion } = get();
-    set({ items, ...recalc(items, selectedPromotion) });
+    set({ items: list, ...recalc(list, selectedPromotion) });
   },
 
   updateQuantity: (menuItemId, quantity) => {
-    let items = get().items.map((x) => (x.menuItemId === menuItemId ? { ...x, quantity } : x));
-    items = items.filter((x) => x.quantity > 0);
+    let list = get().items.map((x) => (x.menuItemId === menuItemId ? { ...x, quantity } : x));
+    list = list.filter((x) => x.quantity > 0);
     const { selectedPromotion } = get();
-    set({ items, ...recalc(items, selectedPromotion) });
+    set({ items: list, ...recalc(list, selectedPromotion) });
   },
 
   clearCart: () => {

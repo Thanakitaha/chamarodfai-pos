@@ -78,7 +78,7 @@ INSERT INTO pos.accounts (store_id, email, username, password_hash, role, is_act
 SELECT s.store_id,
        'chamarodfai@gmail.com',
        'admin',
-       '$2y$10$FXiElelg6Fbxz6gg4qa42unoIIhlIa//jkvPKYYd.WJTnpW3K/Q.W',
+       crypt('chamarodfai101', gen_salt('bf', 10)),
        'owner', TRUE
 FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s
 WHERE NOT EXISTS (

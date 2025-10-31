@@ -1,4 +1,4 @@
-// Configuration for switching between local API and Google Sheets API
+// webapp/client/src/services/api-config.ts
 import api, { promotionAPI } from './api';
 import {
   googleMenuAPI,
@@ -8,7 +8,6 @@ import {
 } from './google-sheets-api';
 import type { MenuItem, Promotion, Order, SalesReport, ApiResponse } from '../types';
 
-// ใช้ค่าจาก env (Vite) แทนฮาร์ดโค้ด: ตั้งใน .env => VITE_USE_SHEETS=false
 const USE_GOOGLE_SHEETS = String(import.meta.env.VITE_USE_SHEETS || 'false') === 'true';
 
 interface UnifiedAPI {
@@ -36,26 +35,18 @@ interface UnifiedAPI {
   };
 }
 
-/** LOCAL API wrappers (thin wrapper ผ่าน axios instance) */
+/** LOCAL API wrappers */
 const localMenuAPI = {
-  getAll: async () => {
-    const res = await api.get<ApiResponse<MenuItem[]>>('/menu-items');
-    return res.data;
-  },
-  create: async (item: Omit<MenuItem, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const res = await api.post<ApiResponse<MenuItem>>('/menu-items', item);
-    return res.data;
-  },
-  update: async (id: string, item: Partial<MenuItem>) => {
-    const res = await api.put<ApiResponse<MenuItem>>(`/menu-items/${id}`, item);
-    return res.data;
-  },
-  delete: async (id: string) => {
-    const res = await api.delete<ApiResponse<void>>(`/menu-items/${id}`);
-    return res.data;
-  },
+  getAll: async () => (await api.get<ApiResponse<MenuItem[]>>('/menu-items')).data,
+  create: async (item: Omit<MenuItem, 'id' | 'createdAt' | 'updatedAt'>) =>
+    (await api.post<ApiResponse<MenuItem>>('/menu-items', item)).data,
+  update: async (id: string, item: Partial<MenuItem>) =>
+    (await api.put<ApiResponse<MenuItem>>(`/menu-items/${id}`, item)).data,
+  delete: async (id: string) =>
+    (await api.delete<ApiResponse<void>>(`/menu-items/${id}`)).data,
 };
 
+// ใช้ชุด promotionAPI ที่ export จาก ./api
 const localPromotionAPI = {
   getAll: () => promotionAPI.list(false),
   create: promotionAPI.create,
@@ -65,32 +56,18 @@ const localPromotionAPI = {
 };
 
 const localOrderAPI = {
-  getAll: async () => {
-    const res = await api.get<ApiResponse<Order[]>>('/orders');
-    return res.data;
-  },
-  create: async (order: any) => {
-    const res = await api.post<ApiResponse<Order>>('/orders', order);
-    return res.data;
-  },
-  getNextOrderNumber: async () => {
-    const res = await api.get<ApiResponse<{ orderNumber: string }>>('/orders/next-number');
-    return res.data;
-  },
+  getAll: async () => (await api.get<ApiResponse<Order[]>>('/orders')).data,
+  create: async (order: any) =>
+    (await api.post<ApiResponse<Order>>('/orders', order)).data,
+  getNextOrderNumber: async () =>
+    (await api.get<ApiResponse<{ orderNumber: string }>>('/orders/next-number')).data,
 };
 
 const localReportAPI = {
-  getSalesReport: async (period: string, date?: string) => {
-    const res = await api.get<ApiResponse<SalesReport>>('/reports/sales', { params: { period, date } });
-    return res.data;
-  },
-  getTrendData: async (days?: number) => {
-    const res = await api.get<ApiResponse<{ date: string; revenue: number; orders: number }[]>>(
-      '/reports/trend',
-      { params: { days } }
-    );
-    return res.data;
-  },
+  getSalesReport: async (period: string, date?: string) =>
+    (await api.get<ApiResponse<SalesReport>>('/reports/sales', { params: { period, date } })).data,
+  getTrendData: async (days?: number) =>
+    (await api.get<ApiResponse<{ date: string; revenue: number; orders: number }[]>>('/reports/trend', { params: { days } })).data,
 };
 
 export const apiConfig: UnifiedAPI = {

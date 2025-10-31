@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 
 import { pool } from './config/db';
 import authRouter from './routes/auth';
@@ -16,13 +17,13 @@ const app = express();
 
 // ---------- Middlewares ----------
 app.use(cors());
+app.use(cookieParser());                 // ✅ ต้องมีเพื่ออ่าน cookie 'session'
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
-app.use('/api/auth', authRouter);
 
 // ---------- Helpers ----------
 async function ping() {
-  // คืนข้อมูลสถานะ DB แบบอ่านง่าย ใช้สิทธิ์ปกติได้
   const { rows } = await pool.query<{
     current_database: string;
     current_user: string;
@@ -51,15 +52,20 @@ app.get('/api', (_req, res) => {
     endpoints: {
       health: "/api/health",
       dbInfo: "/api/db/info",
-      // คง route เดิมเพื่อความเข้ากันได้
-      sheetsInfo: "/api/sheets/info",
+      sheetsInfo: "/api/sheets/info", // compatibility
       menuItems: {
         list: "GET /api/menu-items",
         create: "POST /api/menu-items",
         update: "PUT /api/menu-items/:id",
         delete: "DELETE /api/menu-items/:id"
       },
-      promotions: "GET /api/promotions",
+      promotions: {
+        list: "GET /api/promotions",
+        create: "POST /api/promotions",
+        update: "PUT /api/promotions/:id",
+        delete: "DELETE /api/promotions/:id",
+        toggle: "POST /api/promotions/:id/toggle"
+      },
       orders: {
         list: "GET /api/orders",
         create: "POST /api/orders",
@@ -91,7 +97,7 @@ app.get('/api/db/info', async (_req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// (Backward compat) เดิม client เคยเรียก /api/sheets/info → ให้ตอบกลับว่าใช้ Postgres แล้ว
+// (Backward compat) เดิม client เคยเรียก /api/sheets/info → ตอบกลับว่าใช้ Postgres แล้ว
 app.get('/api/sheets/info', async (_req, res, next) => {
   try {
     const info = await ping();
@@ -106,6 +112,7 @@ app.get('/api/sheets/info', async (_req, res, next) => {
 });
 
 // ---------- Routes ----------
+app.use('/api/auth', authRouter);
 app.use('/api/menu-items', menu);
 app.use('/api/orders', orders);
 app.use('/api/promotions', promotions);
@@ -137,3 +144,5 @@ const shutdown = async () => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+export default app;
