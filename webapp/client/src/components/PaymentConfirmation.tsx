@@ -1,9 +1,20 @@
 // src/components/PaymentConfirmation.tsx
 import React from 'react';
-import type { CartItem } from '../types';
+
+// ===== Local types (กันปัญหา cache ของ types.ts) =====
+type LocalTopping = { id: string; name: string; price: number };
+type LocalCartItem = {
+  menuItemId: number;
+  price: number;
+  quantity: number;
+  menuItem?: { name?: string | null };
+  variantKey?: string;
+  sweetness?: 'extra' | 'normal' | 'less' | 'none';
+  toppings?: LocalTopping[];
+};
 
 type Props = {
-  items: CartItem[];
+  items: LocalCartItem[];
   subtotal: number;
   discount: number;
   total: number;
@@ -31,7 +42,7 @@ const PaymentConfirmation: React.FC<Props> = ({
                   <div className="text-xs text-gray-500">
                     {it.sweetness ? `• ${it.sweetness}` : ''}
                     {it.toppings && it.toppings.length > 0
-                      ? ` • ${it.toppings.map(t => t.name).join(', ')}`
+                      ? ` • ${it.toppings.map((t: LocalTopping) => t.name).join(', ')}`
                       : ''}
                   </div>
                 )}

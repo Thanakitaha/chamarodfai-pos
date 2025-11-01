@@ -2,11 +2,38 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Minus, Trash2, ShoppingCart, Receipt } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import api, { orderAPI, promotionAPI } from '../services/api'; // ใช้ api.ts เดิมของคุณ
+import api, { orderAPI, promotionAPI } from '../services/api';
 import { useCartStore } from '../stores/cartStore';
-import { MenuItem, Promotion, Topping, CartItem } from '../types';
 import PaymentConfirmation from '../components/PaymentConfirmation';
 import ReceiptModal from '../components/ReceiptModal';
+
+// ===== Local types (กันปัญหา cache types.ts ระหว่าง build) =====
+type LocalMenuItem = {
+  id: number;
+  name: string;
+  price: number;
+  category?: string | null;
+  image?: string | null;
+  [k: string]: any;
+};
+
+type LocalPromotion = {
+  id: number | string;
+  name: string;
+  active: boolean;
+  [k: string]: any;
+};
+
+type LocalTopping = { id: string; name: string; price: number };
+type LocalCartItem = {
+  menuItemId: number;
+  price: number;
+  quantity: number;
+  menuItem?: { name?: string | null };
+  variantKey?: string;
+  sweetness?: 'extra' | 'normal' | 'less' | 'none';
+  toppings?: LocalTopping[];
+};
 
 const toNum = (v: any, d = 0) => {
   const n = Number(v);
@@ -29,7 +56,7 @@ const SWEETNESS = [
 
 type SweetnessKey = typeof SWEETNESS[number]['key'];
 
-const TOPPINGS: ReadonlyArray<Topping> = [
+const TOPPINGS: ReadonlyArray<LocalTopping> = [
   { id: 'tp_pearl', name: 'ไข่มุก', price: 5 },
   { id: 'tp_pudding', name: 'พุดดิ้ง', price: 7 },
   { id: 'tp_grass', name: 'เฉาก๊วย', price: 5 },
@@ -50,10 +77,15 @@ const normalizeOrderForUI = (o: any) => {
       }))
     : [];
 
+  const rawPid = (o.promotionId ?? o.promotion_id);
+  const promotionId = (rawPid === undefined || rawPid === null)
+    ? null
+    : (Number(rawPid) || null);
+
   return {
     id: Number(o.id ?? o.order_id ?? 0),
     orderNumber: o.orderNumber ?? o.order_number ?? '',
-    promotionId: o.promotionId ?? Number(o.promotion_id ?? 0) || null,
+    promotionId,
     items,
     subtotal: Number(o.subtotal ?? 0),
     discount: Number(o.discount ?? 0),
@@ -63,17 +95,17 @@ const normalizeOrderForUI = (o: any) => {
 };
 
 const OrderPage: React.FC = () => {
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [menuItems, setMenuItems] = useState<LocalMenuItem[]>([]);
+  const [promotions, setPromotions] = useState<LocalPromotion[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ทั้งหมด');
   const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any>(null);
 
   // โมดัลปรับแต่ง
-  const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
+  const [customizingItem, setCustomizingItem] = useState<LocalMenuItem | null>(null);
   const [selectedSweetness, setSelectedSweetness] = useState<SweetnessKey>('normal');
-  const [selectedToppings, setSelectedToppings] = useState<Topping[]>([]);
+  const [selectedToppings, setSelectedToppings] = useState<LocalTopping[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
@@ -89,13 +121,13 @@ const OrderPage: React.FC = () => {
     applyPromotion,
   } = useCartStore();
 
-  const openCustomize = (item: MenuItem) => {
+  const openCustomize = (item: LocalMenuItem) => {
     setCustomizingItem(item);
     setSelectedSweetness('normal');
     setSelectedToppings([]);
   };
 
-  const toggleTopping = (tp: Topping) => {
+  const toggleTopping = (tp: LocalTopping) => {
     setSelectedToppings((prev) => {
       const exists = prev.find((t) => t.id === tp.id);
       if (exists) return prev.filter((t) => t.id !== tp.id);
@@ -106,12 +138,12 @@ const OrderPage: React.FC = () => {
   const confirmCustomize = () => {
     if (!customizingItem) return;
     const toppingsTotal = selectedToppings.reduce<number>(
-      (s: number, t: Topping) => s + Number(t.price || 0),
+      (s: number, t: LocalTopping) => s + Number(t.price || 0),
       0
     );
     const customPrice = Number(customizingItem.price) + toppingsTotal;
     const variantKey = `${customizingItem.id}|${selectedSweetness}|${selectedToppings
-      .map((t: Topping) => t.id)
+      .map((t: LocalTopping) => t.id)
       .sort()
       .join('+')}`;
 
@@ -132,18 +164,51 @@ const OrderPage: React.FC = () => {
     fetchPromotions();
   }, []);
 
+  // ====== อัปเดต: รองรับ /api/menu (หลัก) และ fallback เป็น /api/menu-items ======
+  const normalizeMenu = (arr: any[]): LocalMenuItem[] => {
+    return (arr || []).map((m: any) => ({
+      id: Number(m.id ?? m.menuItemId ?? m.menu_item_id ?? 0),
+      name: String(m.name ?? m.menu_item_name ?? ''),
+      price: Number(m.price ?? m.unitPrice ?? m.unit_price ?? 0),
+      category: m.category ?? m.categoryName ?? m.category_name ?? null,
+      image: m.image ?? m.imageUrl ?? m.image_url ?? null,
+      ...m,
+    }));
+  };
+
+  const tryGet = async (path: string) => {
+    const res = await api.get(path, { validateStatus: () => true });
+    if (!res?.data) throw new Error('No data');
+    if (res.status === 404) throw new Error('404');
+    if (res.data?.success && Array.isArray(res.data?.data)) {
+      return normalizeMenu(res.data.data);
+    }
+    // บาง backend อาจตอบเป็น array ตรง ๆ
+    if (Array.isArray(res.data)) return normalizeMenu(res.data);
+    // หรือ success: true แต่โครงสร้างต่าง
+    if (res.data?.success && res.data?.items && Array.isArray(res.data.items)) {
+      return normalizeMenu(res.data.items);
+    }
+    throw new Error('Unexpected response');
+  };
+
   const fetchMenuItems = async () => {
     try {
-      const res = await api.get('/menu');
-      const data = res?.data?.data;
-      if (res?.data?.success && Array.isArray(data)) {
-        setMenuItems(data as MenuItem[]);
-      } else {
-        setMenuItems([]);
+      // ลอง /api/menu ก่อน
+      try {
+        const list = await tryGet('/menu');
+        setMenuItems(list);
+        return;
+      } catch (e: any) {
+        if (e?.message !== '404') throw e;
       }
+      // ถ้า 404 → ลอง /api/menu-items
+      const list2 = await tryGet('/menu-items');
+      setMenuItems(list2);
     } catch (error: any) {
-      console.error(error);
+      console.error('fetchMenuItems error:', error?.message || error);
       setMenuItems([]);
+      toast.error('ดึงเมนูไม่สำเร็จ');
     }
   };
 
@@ -151,7 +216,7 @@ const OrderPage: React.FC = () => {
     try {
       const response = await promotionAPI.list(true);
       if (response?.success && Array.isArray(response.data)) {
-        setPromotions(response.data);
+        setPromotions(response.data as any);
       } else {
         setPromotions([]);
       }
@@ -188,25 +253,25 @@ const OrderPage: React.FC = () => {
       }
 
       const payload = {
-        items: cartItems.map((it: CartItem) => ({
+        items: cartItems.map((it: LocalCartItem) => ({
           menuItemId: Number(it.menuItemId),
           price: Number(it.price),
           quantity: Number(it.quantity),
-          // แนบข้อมูล sweetness/toppings ลง note แบบ JSON string
+          // แนบ sweetness/toppings ลง note เป็น JSON string
           note: JSON.stringify({
             sweetness: it.sweetness ?? 'normal',
-            toppings: (it.toppings ?? []).map((t: Topping) => ({
+            toppings: (it.toppings ?? []).map((t: LocalTopping) => ({
               id: t.id,
               name: t.name,
               price: t.price,
             })),
             toppingsTotal: (it.toppings ?? []).reduce<number>(
-              (s: number, t: Topping) => s + Number(t.price || 0),
+              (s: number, t: LocalTopping) => s + Number(t.price || 0),
               0
             ),
           }),
         })),
-        promotionId: promo ? Number(promo.id) : null,
+        promotionId: promo ? Number((promo as any).id) : null,
         taxAmount: 0,
         serviceCharge: 0,
         status: 'paid' as const,
@@ -313,14 +378,14 @@ const OrderPage: React.FC = () => {
               <div className="text-sm text-gray-500">ยังไม่มีสินค้าในตะกร้า</div>
             ) : (
               <div className="space-y-3">
-                {items.map((it) => (
+                {items.map((it: any) => (
                   <div key={`${it.menuItemId}-${it.variantKey ?? 'default'}`} className="flex items-start justify-between">
                     <div>
                       <div className="font-medium">{it.menuItem?.name}</div>
                       {(it.sweetness || (it.toppings && it.toppings.length)) && (
                         <div className="text-xs text-gray-500">
                           {it.sweetness && `• ${SWEETNESS.find(s => s.key === it.sweetness)?.label ?? ''}`}{' '}
-                          {it.toppings && it.toppings.length > 0 && `• ${it.toppings.map((t) => t.name).join(', ')}`}
+                          {it.toppings && it.toppings.length > 0 && `• ${it.toppings.map((t: any) => t.name).join(', ')}`}
                         </div>
                       )}
                       <div className="text-xs text-gray-400">
@@ -359,16 +424,16 @@ const OrderPage: React.FC = () => {
               <div className="text-sm font-medium mb-1">โปรโมชั่น</div>
               <select
                 className="w-full border rounded px-2 py-1.5 text-sm"
-                value={selectedPromotion ? String(selectedPromotion.id) : ''} // ไม่ส่ง null
+                value={selectedPromotion ? String((selectedPromotion as any).id) : ''} // ไม่ส่ง null
                 onChange={(e) => {
                   const id = e.target.value;
                   const p = promotions.find((x) => String(x.id) === id);
-                  applyPromotion(p);
+                  applyPromotion(p as any);
                 }}
               >
                 <option value="">-- ไม่ใช้โปรโมชั่น --</option>
                 {promotions.map((p) => (
-                  <option key={p.id} value={String(p.id)}>
+                  <option key={String(p.id)} value={String(p.id)}>
                     {p.name}
                   </option>
                 ))}
@@ -393,9 +458,10 @@ const OrderPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ยืนยันชำระเงิน */}
       {showPaymentConfirmation && (
         <PaymentConfirmation
-          items={items}
+          items={items as unknown as LocalCartItem[]}
           subtotal={subtotal}
           discount={discount}
           total={total}
@@ -434,7 +500,7 @@ const OrderPage: React.FC = () => {
             <div className="mb-4">
               <div className="font-medium mb-2">ท็อปปิ้ง (คิดเพิ่มตามราคา)</div>
               <div className="grid grid-cols-2 gap-2">
-                {TOPPINGS.map((tp: Topping) => {
+                {TOPPINGS.map((tp: LocalTopping) => {
                   const active = !!selectedToppings.find(t => t.id === tp.id);
                   return (
                     <button
@@ -459,7 +525,7 @@ const OrderPage: React.FC = () => {
                 {(
                   Number(customizingItem.price) +
                   selectedToppings.reduce<number>(
-                    (s: number, t: Topping) => s + Number(t.price || 0),
+                    (s: number, t: LocalTopping) => s + Number(t.price || 0),
                     0
                   )
                 ).toFixed(2)}

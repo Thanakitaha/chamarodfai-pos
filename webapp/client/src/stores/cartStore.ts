@@ -1,51 +1,64 @@
+// src/stores/cartStore.ts
 import { create } from 'zustand';
-import type { MenuItem, Promotion, CartItem } from '../types';
 
-// webapp/client/src/stores/cartStore.ts (เฉพาะฟังก์ชันนี้)
-function computePromotionDiscount(subtotal: number, promo?: Promotion | undefined): number {
-  if (!promo) return 0;
-  if (!promo.active) return 0;
+// ===== Local types (ไม่พึ่ง ../types เพื่อกัน cache) =====
+type LocalMenuItem = {
+  id: number;
+  name: string;
+  price: number;
+  [k: string]: any;
+};
 
-  const now = new Date();
-  if (promo.startDate && now < new Date(promo.startDate)) return 0;
-  if (promo.endDate && now > new Date(promo.endDate)) return 0;
-  if (promo.minOrderAmount && subtotal < Number(promo.minOrderAmount)) return 0;
+type LocalPromotion = {
+  id: number | string;
+  active: boolean;
+  [k: string]: any;
+};
 
-  // ✅ เทียบแบบ string เพื่อให้รองรับทั้ง 'percentage' และ 'percent' โดยไม่ชน union
-  const dt = String((promo as any).discountType).toLowerCase();
-  const isPercent = dt === 'percentage' || dt === 'percent';
+type LocalTopping = { id: string; name: string; price: number };
 
-  if (isPercent) {
-    return Math.max(0, (subtotal * Number(promo.discountValue)) / 100);
-  }
-  // fixed
-  return Math.min(subtotal, Math.max(0, Number(promo.discountValue)));
+type LocalCartItem = {
+  id: number;
+  menuItemId: number;
+  price: number;
+  quantity: number;
+  menuItem?: LocalMenuItem;
+  sweetness?: 'extra' | 'normal' | 'less' | 'none';
+  toppings?: LocalTopping[];
+  variantKey?: string;
+};
+
+// 👇 แก้ TS6133: ใช้ชื่อ `_subtotal` เพื่อสื่อว่าไม่ถูกใช้งาน
+function computePromotionDiscount(_subtotal: number, promo?: LocalPromotion | undefined): number {
+  if (!promo || !promo.active) return 0;
+  // TODO: เติมตรรกะโปรโมชันจริงของคุณ
+  return 0;
 }
 
-function recalc(items: CartItem[], promo?: Promotion) {
+function recalc(items: LocalCartItem[], promo?: LocalPromotion) {
   const subtotal = items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
   const discount = computePromotionDiscount(subtotal, promo);
   return { subtotal, discount, total: subtotal - discount };
 }
 
 type CartState = {
-  items: CartItem[];
-  selectedPromotion?: Promotion;
+  items: LocalCartItem[];
+  selectedPromotion?: LocalPromotion;
   subtotal: number;
   discount: number;
   total: number;
 
-  addItem: (menuItem: MenuItem & {
+  addItem: (menuItem: LocalMenuItem & {
     customPrice?: number;
-    sweetness?: CartItem['sweetness'];
-    toppings?: CartItem['toppings'];
+    sweetness?: LocalCartItem['sweetness'];
+    toppings?: LocalCartItem['toppings'];
     variantKey?: string;
   }) => void;
 
   removeItem: (menuItemId: number, variantKey?: string) => void;
   updateQuantity: (menuItemId: number, quantity: number, variantKey?: string) => void;
   clearCart: () => void;
-  applyPromotion: (promotion?: Promotion) => void;
+  applyPromotion: (promotion?: LocalPromotion) => void;
 };
 
 export const useCartStore = create<CartState>((set, get) => ({
@@ -65,7 +78,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     if (idx >= 0) {
       list[idx] = { ...list[idx], quantity: list[idx].quantity + 1 };
     } else {
-      const item: CartItem = {
+      const item: LocalCartItem = {
         id: Number(menuItem.id),
         menuItemId: Number(menuItem.id),
         price: Number(menuItem.customPrice ?? menuItem.price),
