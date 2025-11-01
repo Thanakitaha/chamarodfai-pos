@@ -4,13 +4,15 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
+import path from 'path';
 
 import { pool } from './config/db';
 import authRouter from './routes/auth';
-import menu from './routes/menu';
-import orders from './routes/orders';
-import promotions from './routes/promotions';
-import reports from './routes/reports';
+import menuRouter from './routes/menu';
+import ordersRouter from './routes/orders';
+import promotionsRouter from './routes/promotions';
+import reportsRouter from './routes/reports';
+import uploadsRouter from './routes/uploads';
 
 const PORT = Number(process.env.PORT || 3001);
 const app = express();
@@ -21,6 +23,10 @@ app.use(cookieParser());                 // ✅ ต้องมีเพื่�
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
+
+// ---------- Static for uploaded files ----------
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+app.use('/uploads', express.static(UPLOAD_DIR));
 
 // ---------- Helpers ----------
 async function ping() {
@@ -113,10 +119,11 @@ app.get('/api/sheets/info', async (_req, res, next) => {
 
 // ---------- Routes ----------
 app.use('/api/auth', authRouter);
-app.use('/api/menu-items', menu);
-app.use('/api/orders', orders);
-app.use('/api/promotions', promotions);
-app.use('/api/reports', reports);
+app.use('/api/menu-items', menuRouter);
+app.use('/api/orders', ordersRouter);
+app.use('/api/promotions', promotionsRouter);
+app.use('/api/reports', reportsRouter);
+app.use('/api/uploads', uploadsRouter);
 
 // ---------- 404 ----------
 app.use('*', (_req, res) => {

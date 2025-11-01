@@ -83,32 +83,43 @@ export async function salesReportDaily(dateStr: string) {
   };
 }
 
+export async function salesSummaryDaily(dateISO: string) {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      DATE($1) AS date,
+      COALESCE(SUM(oi.total_price), 0)::numeric AS total_sales
+    FROM pos.orders o
+    LEFT JOIN pos.order_items oi ON oi.order_id = o.order_id
+    WHERE DATE(o.created_at AT TIME ZONE 'UTC') = DATE($1)
+  `,
+    [dateISO]
+  );
+  return rows?.[0] ?? { date: dateISO, total_sales: 0 };
+}
+
 export async function salesTrend(days: number) {
-  // last N days including today (Bangkok)
-  const sql = `
+  const { rows } = await pool.query(
+    `
     WITH d AS (
-      SELECT generate_series(0, $2) AS offset
+      SELECT generate_series(
+        CURRENT_DATE - ($1::int - 1) * INTERVAL '1 day',
+        CURRENT_DATE,
+        INTERVAL '1 day'
+      )::date AS dte
     )
-    , day_span AS (
-      SELECT (timezone('Asia/Bangkok', now())::date - offset)::date AS day
-      FROM d
-    )
-    , daily AS (
-      SELECT (o.created_at AT TIME ZONE 'Asia/Bangkok')::date AS day,
-             COUNT(*) FILTER (WHERE o.status='paid') AS orders_paid,
-             COALESCE(SUM(o.total) FILTER (WHERE o.status='paid'),0)::numeric AS revenue_paid
-      FROM pos.orders o
-      WHERE o.store_id = $1
-        AND (o.created_at AT TIME ZONE 'Asia/Bangkok')::date >= (timezone('Asia/Bangkok', now())::date - $2)
-      GROUP BY 1
-    )
-    SELECT s.day::text AS date,
-           COALESCE(daily.revenue_paid, 0)::float8 AS revenue,
-           COALESCE(daily.orders_paid, 0)::int AS orders
-    FROM day_span s
-    LEFT JOIN daily ON daily.day = s.day
-    ORDER BY s.day ASC;
-  `;
-  const { rows } = await pool.query(sql, [STORE_ID, days-1]);
+    SELECT
+      d.dte AS date,
+      COALESCE(SUM(oi.total_price), 0)::numeric AS total_sales
+    FROM d
+    LEFT JOIN pos.orders o
+      ON (o.created_at AT TIME ZONE 'UTC')::date = d.dte
+    LEFT JOIN pos.order_items oi
+      ON oi.order_id = o.order_id
+    GROUP BY d.dte
+    ORDER BY d.dte ASC
+  `,
+    [days]
+  );
   return rows;
 }
