@@ -149,14 +149,12 @@ const OrderPage: React.FC = () => {
 
   const tryGet = async (path: string) => {
     const res = await api.get(path, { validateStatus: () => true });
+    if (res?.status === 404) throw new Error('404'); // <<< ทำให้เงียบลง
     if (!res?.data) throw new Error('No data');
-    if (res.status === 404) throw new Error('404');
     if (res.data?.success && Array.isArray(res.data?.data)) {
       return normalizeMenu(res.data.data);
     }
-    // บาง backend อาจตอบเป็น array ตรง ๆ
     if (Array.isArray(res.data)) return normalizeMenu(res.data);
-    // หรือ success: true แต่โครงสร้างต่าง
     if (res.data?.success && res.data?.items && Array.isArray(res.data.items)) {
       return normalizeMenu(res.data.items);
     }
@@ -165,15 +163,13 @@ const OrderPage: React.FC = () => {
 
   const fetchMenuItems = async () => {
     try {
-      // ลอง /api/menu ก่อน
       try {
         const list = await tryGet('/menu');
         setMenuItems(list);
         return;
       } catch (e: any) {
-        if (e?.message !== '404') throw e;
+        if (e?.message !== '404') throw e; // 404 เฉย ๆ ไม่ต้อง noisy
       }
-      // ถ้า 404 → ลอง /api/menu-items
       const list2 = await tryGet('/menu-items');
       setMenuItems(list2);
     } catch (error: any) {
