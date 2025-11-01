@@ -1,19 +1,29 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
+import App from './App'
 import './index.css'
+import { useAuth } from './stores/authStore'
+
+function Boot() {
+  const { hydrate } = useAuth();
+
+  useEffect(() => {
+    // พยายามโหลด user จาก token ที่เก็บไว้ (ถ้ามี)
+    hydrate();
+  }, [hydrate]);
+
+  return <App />;
+}
 
 try {
   const rootElement = document.getElementById('root');
   if (!rootElement) {
     throw new Error('Root element not found');
   }
-  
-  const root = ReactDOM.createRoot(rootElement);
-  root.render(
+  ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
-      <App />
-    </React.StrictMode>,
+      <Boot />
+    </React.StrictMode>
   );
 } catch (error) {
   console.error('Failed to render app:', error);

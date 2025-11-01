@@ -1,34 +1,18 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../stores/authStore';
-import LoginModal from './LoginModal';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  title: string;
+  title?: string;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, title }) => {
-  const { isAuthenticated, login } = useAuth();
-  const [showLoginModal, setShowLoginModal] = useState(!isAuthenticated);
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
 
-  // ✅ รับ (identifier, password) ให้ตรงกับ LoginModal
-  const handleLogin = async (identifier: string, password: string) => {
-    const success = await login(identifier, password);
-    if (success) setShowLoginModal(false);
-    return success;
-  };
-
-  if (!isAuthenticated || showLoginModal) {
-    return (
-      <>
-        <LoginModal
-          isOpen={showLoginModal}
-          onLogin={handleLogin}
-          onClose={() => setShowLoginModal(false)}
-          title={title}
-        />
-      </>
-    );
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
   return <>{children}</>;
