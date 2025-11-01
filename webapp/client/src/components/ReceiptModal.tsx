@@ -4,35 +4,72 @@ import React from 'react';
 import { X, Download, Printer } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
-type ReceiptItem = {
-  id: string;
-  menuItemId?: string;
+// ===== types (ยืดหยุ่นรับทั้ง snake_case / camelCase) =====
+type AnyOrderItem = {
+  id?: string | number;
+  order_item_id?: number;
+  menu_item_id?: number;
+  menuItemId?: number;
   menuItemName?: string;
   name?: string;
-  quantity: number;
-  price?: number;
-  subtotal: number;
+  quantity?: number | string;
+  price?: number | string;
+  subtotal?: number | string;
 };
 
-type ReceiptOrder = {
+type AnyOrder = {
   orderNumber?: string;
+  order_number?: string;
   createdAt?: string;
-  items: ReceiptItem[];
-  subtotal: number;
-  discount: number;
-  total: number;
+  created_at?: string;
+  items?: AnyOrderItem[];
+  subtotal?: number | string;
+  discount?: number | string;
+  total?: number | string;
   status?: string;
 };
 
 interface ReceiptModalProps {
-  order: ReceiptOrder;
+  order: AnyOrder | null | undefined;
   onClose: () => void;
 }
 
+// ===== helpers =====
+const n = (v: any, d = 0) => {
+  const num = Number(v);
+  return Number.isFinite(num) ? num : d;
+};
+const s = (v: any, d = '') => (v ?? d) as string;
+
+const normalizeOrder = (o: AnyOrder | null | undefined) => {
+  const items = Array.isArray(o?.items) ? o!.items : [];
+  return {
+    orderNumber: s(o?.orderNumber ?? o?.order_number, '-'),
+    createdAt: s(o?.createdAt ?? o?.created_at, undefined),
+    items: items.map((it) => ({
+      key:
+        String(
+          it.id ??
+            it.order_item_id ??
+            `${it.menu_item_id ?? it.menuItemId ?? 'item'}-${Math.random()}`
+        ),
+      name: s(it.menuItemName ?? it.name, ''),
+      qty: n(it.quantity, 0),
+      price: n(it.price, 0),
+      subtotal: n(it.subtotal, n(it.price, 0) * n(it.quantity, 0)),
+      menuItemId: n(it.menu_item_id ?? it.menuItemId, NaN),
+    })),
+    subtotal: n(o?.subtotal, 0),
+    discount: n(o?.discount, 0),
+    total: n(o?.total, 0),
+  };
+};
+
 const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) => {
+  // กันพัง: ถ้า order ยังไม่มา ให้เป็นโครงว่าง
+  const safe = normalizeOrder(order ?? {});
   const receiptRef = React.useRef<HTMLDivElement>(null);
 
-  // 📥 บันทึกใบเสร็จเป็น PNG
   const handleSaveImage = async () => {
     if (!receiptRef.current) return;
     const canvas = await html2canvas(receiptRef.current, {
@@ -40,12 +77,11 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) => {
       scale: 2,
     });
     const link = document.createElement('a');
-    link.download = `receipt-${order.orderNumber ?? 'no-number'}.png`;
+    link.download = `receipt-${safe.orderNumber || 'no-number'}.png`;
     link.href = canvas.toDataURL();
     link.click();
   };
 
-  // 🖨️ พิมพ์เฉพาะใบเสร็จ
   const handlePrint = () => {
     if (!receiptRef.current) return;
     const html = receiptRef.current.innerHTML;
@@ -54,7 +90,7 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) => {
     win.document.write(`
       <html>
         <head>
-          <title>Receipt ${order.orderNumber ?? ''}</title>
+          <title>Receipt ${safe.orderNumber ?? ''}</title>
           <style>
             * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
             .receipt { width: 360px; margin: 0 auto; padding: 16px; }
@@ -115,11 +151,11 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) => {
             <div className="mb-4 pb-4 border-b border-gray-200">
               <div className="flex justify-between text-sm">
                 <span>เลขที่ใบเสร็จ:</span>
-                <span className="font-medium">{order.orderNumber ?? '-'}</span>
+                <span className="font-medium">{safe.orderNumber ?? '-'}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span>วันที่:</span>
-                <span>{formatDate(order.createdAt)}</span>
+                <span>{formatDate(order?.createdAt ?? (order as any)?.created_at)}</span>
               </div>
             </div>
 
@@ -134,13 +170,20 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {order.items.map((item) => (
-                    <tr key={item.id} className="border-b border-gray-50">
-                      <td className="py-1">{item.menuItemName ?? item.name ?? ''}</td>
-                      <td className="text-center py-1">{item.quantity}</td>
+                  {(safe.items ?? []).map((item) => (
+                    <tr key={item.key} className="border-b border-gray-50">
+                      <td className="py-1">{item.name}</td>
+                      <td className="text-center py-1">{item.qty}</td>
                       <td className="text-right py-1">฿{item.subtotal.toFixed(2)}</td>
                     </tr>
                   ))}
+                  {(!safe.items || safe.items.length === 0) && (
+                    <tr>
+                      <td colSpan={3} className="py-2 text-center text-gray-500">
+                        ไม่มีรายการสินค้า
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -149,17 +192,17 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) => {
             <div className="pt-4 border-t border-gray-200">
               <div className="flex justify-between text-sm mb-1">
                 <span>ยอดรวม:</span>
-                <span>฿{order.subtotal.toFixed(2)}</span>
+                <span>฿{safe.subtotal.toFixed(2)}</span>
               </div>
-              {order.discount > 0 && (
+              {safe.discount > 0 && (
                 <div className="flex justify-between text-sm text-green-600 mb-1">
                   <span>ส่วนลด:</span>
-                  <span>-฿{order.discount.toFixed(2)}</span>
+                  <span>-฿{safe.discount.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-lg pt-2 border-t border-gray-200">
                 <span>ยอดสุทธิ:</span>
-                <span>฿{order.total.toFixed(2)}</span>
+                <span>฿{safe.total.toFixed(2)}</span>
               </div>
             </div>
 
