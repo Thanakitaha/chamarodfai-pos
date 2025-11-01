@@ -1,54 +1,66 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart3, TrendingUp, DollarSign, ShoppingBag, Calendar } from 'lucide-react';
 import apiConfig from '../services/api-config';
 import SalesTrendChart from '../components/SalesTrendChart';
 import { SalesReport } from '../types';
 
+const normalizeReport = (raw: Partial<SalesReport> | null | undefined, fallback: { period: string; date: string }): SalesReport => {
+  return {
+    period: raw?.period ?? fallback.period,
+    date: raw?.date ?? fallback.date,
+    totalOrders: Number(raw?.totalOrders ?? 0),
+    totalRevenue: Number(raw?.totalRevenue ?? 0),
+    totalProfit: Number(raw?.totalProfit ?? 0),
+    topSellingItems: Array.isArray(raw?.topSellingItems)
+      ? raw!.topSellingItems.map(it => ({
+          name: it?.name ?? '-',
+          quantity: Number((it as any)?.quantity ?? 0),
+          revenue: Number((it as any)?.revenue ?? 0),
+        }))
+      : [],
+  };
+};
+
 const ReportsPage: React.FC = () => {
-  const [selectedPeriod, setSelectedPeriod] = useState('daily');
+  const [selectedPeriod, setSelectedPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('daily');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportData, setReportData] = useState<SalesReport | null>(null);
-  const [trendData, setTrendData] = useState<{ date: string, revenue: number, orders: number }[]>([]);
+  const [trendData, setTrendData] = useState<{ date: string; revenue: number; orders: number }[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const periodOptions = useMemo(
+    () => [
+      { value: 'daily', label: 'รายวัน' },
+      { value: 'weekly', label: 'รายสัปดาห์' },
+      { value: 'monthly', label: 'รายเดือน' },
+      { value: 'yearly', label: 'รายปี' },
+    ],
+    []
+  );
 
   useEffect(() => {
     fetchReport();
     fetchTrendData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPeriod, selectedDate]);
 
   const fetchReport = async () => {
     setLoading(true);
     try {
-      console.log('Fetching report for:', selectedPeriod, selectedDate);
-      const response = await apiConfig.report.getSalesReport(selectedPeriod, selectedDate);
-      console.log('Report response:', response);
-      
-      if (response.success && response.data) {
-        console.log('Report data:', response.data);
-        setReportData(response.data);
+      const resp = await apiConfig.report.getSalesReport(selectedPeriod, selectedDate);
+
+      // เผื่อบางกรณี backend ตอบ {success:true} แต่ไม่มี data → normalize ศูนย์ให้
+      if (resp?.success) {
+        const normalized = normalizeReport(resp.data, { period: selectedPeriod, date: selectedDate });
+        setReportData(normalized);
       } else {
-        console.log('Failed to get report:', response.message);
-        // สร้างข้อมูลตัวอย่างถ้าไม่มีข้อมูล
-        setReportData({
-          period: selectedPeriod,
-          date: selectedDate,
-          totalOrders: 0,
-          totalRevenue: 0,
-          totalProfit: 0,
-          topSellingItems: []
-        });
+        setReportData(
+        normalizeReport(null, { period: selectedPeriod, date: selectedDate })
+        );
       }
     } catch (error) {
       console.error('Error fetching report:', error);
-      // สร้างข้อมูลตัวอย่างถ้าเกิด error
-      setReportData({
-        period: selectedPeriod,
-        date: selectedDate,
-        totalOrders: 0,
-        totalRevenue: 0,
-        totalProfit: 0,
-        topSellingItems: []
-      });
+      setReportData(normalizeReport(null, { period: selectedPeriod, date: selectedDate }));
     } finally {
       setLoading(false);
     }
@@ -56,31 +68,40 @@ const ReportsPage: React.FC = () => {
 
   const fetchTrendData = async () => {
     try {
-      const response = await apiConfig.report.getTrendData(7); // ข้อมูล 7 วันที่ผ่านมา
-      if (response.success && response.data) {
-        setTrendData(response.data);
+      const resp = await apiConfig.report.getTrendData(7); // 7 วันย้อนหลัง
+      if (resp?.success && Array.isArray(resp.data)) {
+        // บังคับให้เป็นตัวเลขกัน undefined
+        setTrendData(
+          resp.data.map(d => ({
+            date: d?.date ?? '',
+            revenue: Number(d?.revenue ?? 0),
+            orders: Number(d?.orders ?? 0),
+          }))
+        );
+      } else {
+        setTrendData([]);
       }
     } catch (error) {
       console.error('Error fetching trend data:', error);
+      setTrendData([]); // ป้องกัน UI พัง
     }
   };
 
-  const periodOptions = [
-    { value: 'daily', label: 'รายวัน' },
-    { value: 'weekly', label: 'รายสัปดาห์' },
-    { value: 'monthly', label: 'รายเดือน' },
-    { value: 'yearly', label: 'รายปี' }
-  ];
+  const avgPerOrder = useMemo(() => {
+    const revenue = Number(reportData?.totalRevenue ?? 0);
+    const orders = Number(reportData?.totalOrders ?? 0);
+    return orders > 0 ? (revenue / orders) : 0;
+  }, [reportData]);
 
   return (
     <div className="p-3 sm:p-4 lg:p-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 sm:mb-6 gap-3 sm:gap-0">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800">รายงานการขาย</h1>
-        
+
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
           <select
             value={selectedPeriod}
-            onChange={(e) => setSelectedPeriod(e.target.value)}
+            onChange={(e) => setSelectedPeriod(e.target.value as any)}
             className="px-3 sm:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
           >
             {periodOptions.map(option => (
@@ -89,7 +110,7 @@ const ReportsPage: React.FC = () => {
               </option>
             ))}
           </select>
-          
+
           <input
             type="date"
             value={selectedDate}
@@ -114,7 +135,7 @@ const ReportsPage: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-xs sm:text-sm text-gray-600">จำนวนออเดอร์</p>
-                  <p className="text-lg sm:text-2xl font-bold text-gray-800">{reportData.totalOrders}</p>
+                  <p className="text-lg sm:text-2xl font-bold text-gray-800">{Number(reportData.totalOrders ?? 0)}</p>
                 </div>
               </div>
             </div>
@@ -126,7 +147,7 @@ const ReportsPage: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-xs sm:text-sm text-gray-600">ยอดขายรวม</p>
-                  <p className="text-lg sm:text-2xl font-bold text-gray-800">฿{reportData.totalRevenue.toFixed(2)}</p>
+                  <p className="text-lg sm:text-2xl font-bold text-gray-800">฿{(Number(reportData.totalRevenue ?? 0)).toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -138,7 +159,7 @@ const ReportsPage: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-xs sm:text-sm text-gray-600">กำไรรวม</p>
-                  <p className="text-lg sm:text-2xl font-bold text-gray-800">฿{reportData.totalProfit.toFixed(2)}</p>
+                  <p className="text-lg sm:text-2xl font-bold text-gray-800">฿{(Number(reportData.totalProfit ?? 0)).toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -151,7 +172,7 @@ const ReportsPage: React.FC = () => {
                 <div>
                   <p className="text-xs sm:text-sm text-gray-600">ยอดขายเฉลี่ย</p>
                   <p className="text-lg sm:text-2xl font-bold text-gray-800">
-                    ฿{reportData.totalOrders > 0 ? (reportData.totalRevenue / reportData.totalOrders).toFixed(2) : '0.00'}
+                    ฿{avgPerOrder.toFixed(2)}
                   </p>
                 </div>
               </div>
@@ -182,22 +203,22 @@ const ReportsPage: React.FC = () => {
               <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
               สินค้าขายดี
             </h3>
-            
+
             {reportData.topSellingItems && reportData.topSellingItems.length > 0 ? (
               <div className="space-y-2 sm:space-y-3">
                 {reportData.topSellingItems.map((item, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg">
+                  <div key={`${item.name}-${index}`} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg">
                     <div className="flex items-center gap-2 sm:gap-3">
                       <div className="w-6 h-6 sm:w-8 sm:h-8 bg-blue-100 rounded-full flex items-center justify-center">
                         <span className="text-xs sm:text-sm font-bold text-blue-600">#{index + 1}</span>
                       </div>
                       <div>
                         <p className="font-medium text-gray-800 text-sm sm:text-base">{item.name}</p>
-                        <p className="text-xs sm:text-sm text-gray-600">ขายได้ {item.quantity} รายการ</p>
+                        <p className="text-xs sm:text-sm text-gray-600">ขายได้ {Number(item.quantity ?? 0)} รายการ</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold text-gray-800 text-sm sm:text-base">฿{item.revenue.toFixed(2)}</p>
+                      <p className="font-semibold text-gray-800 text-sm sm:text-base">฿{(Number(item.revenue ?? 0)).toFixed(2)}</p>
                       <p className="text-sm text-gray-600">รายได้</p>
                     </div>
                   </div>

@@ -3,6 +3,23 @@ import { Calendar, TrendingUp } from 'lucide-react';
 import apiConfig from '../services/api-config';
 import { SalesReport } from '../types';
 
+const normalizeReport = (raw: Partial<SalesReport> | null | undefined, date: string): SalesReport => {
+  return {
+    period: 'daily',
+    date: raw?.date ?? date,
+    totalOrders: Number(raw?.totalOrders ?? 0),
+    totalRevenue: Number(raw?.totalRevenue ?? 0),
+    totalProfit: Number(raw?.totalProfit ?? 0),
+    topSellingItems: Array.isArray(raw?.topSellingItems)
+      ? raw!.topSellingItems.map(it => ({
+          name: it?.name ?? '-',
+          quantity: Number((it as any)?.quantity ?? 0),
+          revenue: Number((it as any)?.revenue ?? 0),
+        }))
+      : [],
+  };
+};
+
 const DailySalesPage: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [salesData, setSalesData] = useState<SalesReport | null>(null);
@@ -10,34 +27,21 @@ const DailySalesPage: React.FC = () => {
 
   useEffect(() => {
     fetchDailySales();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
 
   const fetchDailySales = async () => {
     setLoading(true);
     try {
       const response = await apiConfig.report.getSalesReport('daily', selectedDate);
-      if (response.success && response.data) {
-        setSalesData(response.data);
+      if (response?.success) {
+        setSalesData(normalizeReport(response.data, selectedDate));
       } else {
-        setSalesData({
-          period: 'daily',
-          date: selectedDate,
-          totalOrders: 0,
-          totalRevenue: 0,
-          totalProfit: 0,
-          topSellingItems: []
-        });
+        setSalesData(normalizeReport(null, selectedDate));
       }
     } catch (error) {
       console.error('Error fetching daily sales:', error);
-      setSalesData({
-        period: 'daily',
-        date: selectedDate,
-        totalOrders: 0,
-        totalRevenue: 0,
-        totalProfit: 0,
-        topSellingItems: []
-      });
+      setSalesData(normalizeReport(null, selectedDate));
     } finally {
       setLoading(false);
     }
@@ -48,7 +52,7 @@ const DailySalesPage: React.FC = () => {
       style: 'currency',
       currency: 'THB',
       minimumFractionDigits: 0,
-    }).format(amount);
+    }).format(Number(amount || 0));
   };
 
   const formatDate = (dateString: string) => {
@@ -94,7 +98,7 @@ const DailySalesPage: React.FC = () => {
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">จำนวนออเดอร์</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    {salesData?.totalOrders || 0}
+                    {Number(salesData?.totalOrders ?? 0)}
                   </p>
                 </div>
               </div>
@@ -108,7 +112,7 @@ const DailySalesPage: React.FC = () => {
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">ยอดขายรวม</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    {formatCurrency(salesData?.totalRevenue || 0)}
+                    {formatCurrency(Number(salesData?.totalRevenue ?? 0))}
                   </p>
                 </div>
               </div>
@@ -122,7 +126,7 @@ const DailySalesPage: React.FC = () => {
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">กำไรโดยประมาณ</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    {formatCurrency(salesData?.totalProfit || 0)}
+                    {formatCurrency(Number(salesData?.totalProfit ?? 0))}
                   </p>
                 </div>
               </div>
@@ -139,18 +143,21 @@ const DailySalesPage: React.FC = () => {
               {salesData && salesData.topSellingItems && salesData.topSellingItems.length > 0 ? (
                 <div className="space-y-4">
                   {salesData.topSellingItems.map((item, index) => (
-                    <div key={index} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-b-0">
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between py-3 border-b border-gray-100 last:border-b-0"
+                    >
                       <div className="flex items-center">
                         <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
                           <span className="text-sm font-bold text-blue-600">{index + 1}</span>
                         </div>
                         <div>
                           <p className="font-medium text-gray-900">{item.name}</p>
-                          <p className="text-sm text-gray-500">ขายได้ {item.quantity} รายการ</p>
+                          <p className="text-sm text-gray-500">ขายได้ {Number(item.quantity ?? 0)} รายการ</p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-medium text-gray-900">{formatCurrency(item.revenue)}</p>
+                        <p className="font-medium text-gray-900">{formatCurrency(Number(item.revenue ?? 0))}</p>
                       </div>
                     </div>
                   ))}
