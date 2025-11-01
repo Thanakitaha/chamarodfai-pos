@@ -118,8 +118,9 @@ app.get('/api/sheets/info', async (_req, res, next) => {
 });
 
 // ---------- Routes ----------
+app.use('/api', menuRouter);
 app.use('/api/auth', authRouter);
-app.use('/api/menu-items', menuRouter);
+// app.use('/api/menu-items', menuRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/promotions', promotionsRouter);
 app.use('/api/reports', reportsRouter);

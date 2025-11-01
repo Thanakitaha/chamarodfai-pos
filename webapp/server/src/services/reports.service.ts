@@ -1,17 +1,6 @@
-// webapp/server/src/services/reports.service.ts
 import { pool } from '../config/db';
-
 const STORE_ID = Number(process.env.STORE_ID ?? 1);
 
-// ===== Helper =====
-function toNum(n: any, fb = 0) {
-  const v = Number(n);
-  return Number.isFinite(v) ? v : fb;
-}
-
-/**
- * ดึงรายวันจากมุมมองสรุป v_sales_daily (ต้องมีใน DB)
- */
 export async function salesDaily(from?: string, to?: string) {
   const cond: string[] = [`store_id = $1`];
   const params: any[] = [STORE_ID];
@@ -22,20 +11,13 @@ export async function salesDaily(from?: string, to?: string) {
     `SELECT sale_day, orders_paid, subtotal_paid, discount_paid, tax_paid, service_paid, total_paid
      FROM pos.v_sales_daily
      WHERE ${cond.join(' AND ')}
-     ORDER BY sale_day DESC`,
-    params
+     ORDER BY sale_day DESC`, params
   );
   return rows;
 }
 
-/**
- * สรุปรายวัน (จำนวนออเดอร์, รายรับรวม, กำไรรวม, Top 5 รายการขายดี)
- * อ้างอิงเวลาที่ 'Asia/Bangkok'
- */
 export async function salesReportDaily(dateStr: string) {
-  const dateParam = dateStr; // YYYY-MM-DD
-
-  // รวมจำนวนออเดอร์ที่จ่ายแล้ว + รายรับรวม (orders.total)
+  const dateParam = dateStr;
   const totalsSql = `
     WITH paid_orders AS (
       SELECT o.order_id
@@ -48,12 +30,11 @@ export async function salesReportDaily(dateStr: string) {
       (SELECT COUNT(*) FROM pos.orders o
          WHERE o.order_id IN (SELECT order_id FROM paid_orders))::int AS total_orders,
       COALESCE((SELECT SUM(o.total) FROM pos.orders o
-         WHERE o.order_id IN (SELECT order_id FROM paid_orders)), 0)::numeric AS total_revenue
+         WHERE o.order_id IN (SELECT order_id FROM paid_orders)), 0)::numeric AS total_revenue;
   `;
   const { rows: totalRows } = await pool.query(totalsSql, [STORE_ID, dateParam]);
   const totals = totalRows[0] ?? { total_orders: 0, total_revenue: 0 };
 
-  // กำไรรวม = SUM(oi.subtotal - (oi.cost_at_sale * oi.quantity))
   const profitSql = `
     WITH paid_orders AS (
       SELECT o.order_id
@@ -64,12 +45,11 @@ export async function salesReportDaily(dateStr: string) {
     )
     SELECT COALESCE(SUM(oi.subtotal - (oi.cost_at_sale * oi.quantity)), 0)::numeric AS total_profit
     FROM pos.order_items oi
-    WHERE oi.order_id IN (SELECT order_id FROM paid_orders)
+    WHERE oi.order_id IN (SELECT order_id FROM paid_orders);
   `;
   const { rows: profitRows } = await pool.query(profitSql, [STORE_ID, dateParam]);
   const profit = profitRows[0]?.total_profit ?? 0;
 
-  // Top 5 รายการขายดี (ตามรายได้/ปริมาณ)
   const topSql = `
     WITH paid_orders AS (
       SELECT o.order_id
@@ -86,28 +66,24 @@ export async function salesReportDaily(dateStr: string) {
     WHERE oi.order_id IN (SELECT order_id FROM paid_orders)
     GROUP BY mi.name
     ORDER BY revenue DESC, quantity DESC
-    LIMIT 5
+    LIMIT 5;
   `;
   const { rows: topRows } = await pool.query(topSql, [STORE_ID, dateParam]);
 
   return {
     period: 'daily',
     date: dateParam,
-    totalOrders: toNum(totals.total_orders, 0),
-    totalRevenue: toNum(totals.total_revenue, 0),
-    totalProfit: toNum(profit, 0),
-    topSellingItems: (topRows ?? []).map(r => ({
+    totalOrders: Number(totals.total_orders || 0),
+    totalRevenue: Number(totals.total_revenue || 0),
+    totalProfit: Number(profit || 0),
+    topSellingItems: topRows.map(r => ({
       name: r.name,
-      quantity: toNum(r.quantity, 0),
-      revenue: toNum(r.revenue, 0),
-    })),
+      quantity: Number(r.quantity || 0),
+      revenue: Number(r.revenue || 0),
+    }))
   };
 }
 
-/**
- * สรุปรายวัน (ยอดขายรวมของวันนั้น) — ใช้ order_items.subtotal แทน total_price
- * อ้างอิงวันที่ตาม Asia/Bangkok
- */
 export async function salesSummaryDaily(dateISO: string) {
   const { rows } = await pool.query(
     `
@@ -125,10 +101,6 @@ export async function salesSummaryDaily(dateISO: string) {
   return rows?.[0] ?? { date: dateISO, total_sales: 0 };
 }
 
-/**
- * แนวโน้มยอดขายย้อนหลัง N วัน — รวมยอดขายต่อวันจาก order_items.subtotal
- * อิงวันที่ท้องถิ่น Asia/Bangkok เช่นกัน
- */
 export async function salesTrend(days: number) {
   const { rows } = await pool.query(
     `

@@ -19,15 +19,8 @@ type CreateOrderPayload = {
 };
 
 // --- utils ---
-function toNum(n: any, fallback = 0): number {
-  const v = Number(n);
-  return Number.isFinite(v) ? v : fallback;
-}
-function round2(n: any): number {
-  const v = toNum(n, NaN);
-  if (!Number.isFinite(v)) return 0;
-  return Math.round((v + Number.EPSILON) * 100) / 100;
-}
+const toNum = (n: any, fb = 0) => (Number.isFinite(Number(n)) ? Number(n) : fb);
+const round2 = (n: any) => Math.round((toNum(n) + Number.EPSILON) * 100) / 100;
 
 async function getPromotion(promotionId: number | null) {
   if (!promotionId) return null;
@@ -48,26 +41,18 @@ async function getPromotion(promotionId: number | null) {
 
 function calcDiscount(subtotal: number, promo: any): number {
   if (!promo) return 0;
-  const minOk =
-    promo.min_order_amount == null || subtotal >= Number(promo.min_order_amount);
+  const minOk = promo.min_order_amount == null || subtotal >= Number(promo.min_order_amount);
   if (!minOk) return 0;
-
   const type = String(promo.discount_type || '').toLowerCase();
   const val = Number(promo.discount_value || 0);
-
-  if (type === 'percent' || type === 'percentage') {
-    return Math.max(0, round2(subtotal * (val / 100)));
-  }
-  if (type === 'fixed') {
-    return Math.min(subtotal, Math.max(0, round2(val)));
-  }
+  if (type === 'percent' || type === 'percentage') return Math.max(0, round2(subtotal * (val / 100)));
+  if (type === 'fixed') return Math.min(subtotal, Math.max(0, round2(val)));
   return 0;
 }
 
 // ---------- POST /api/orders ----------
 router.post('/', async (req, res) => {
   const payload = req.body as CreateOrderPayload;
-
   if (!payload?.items?.length) {
     return res.status(400).json({ success: false, error: 'No items' });
   }
@@ -76,19 +61,13 @@ router.post('/', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1) คิดยอดรวมจาก payload
-    const cleanItems = payload.items.map((it) => ({
+    const items = payload.items.map((it) => ({
       menuItemId: toNum(it.menuItemId),
       price: round2(it.price),
-      quantity: round2(it.quantity),
+      quantity: toNum(it.quantity),
       note: it.note ?? null,
     }));
-
-    const rawSubtotal = cleanItems.reduce(
-      (s, it) => s + toNum(it.price) * toNum(it.quantity),
-      0
-    );
-    const subtotal = round2(rawSubtotal);
+    const subtotal = round2(items.reduce((s, it) => s + it.price * it.quantity, 0));
 
     const promo = await getPromotion(payload.promotionId ?? null);
     const discount = round2(calcDiscount(subtotal, promo));
@@ -97,7 +76,6 @@ router.post('/', async (req, res) => {
     const total = round2(subtotal - discount + taxAmount + serviceCharge);
     const status = (payload.status ?? 'paid') as 'open' | 'paid';
 
-    // 2) INSERT orders
     const orderIns = await client.query(
       `INSERT INTO pos.orders
          (store_id, subtotal, discount, promotion_id, tax_amount, service_charge, total, status)
@@ -109,34 +87,48 @@ router.post('/', async (req, res) => {
     const orderId = Number(orderIns.rows[0].order_id);
     const orderNumber = String(orderIns.rows[0].order_number);
 
-    // 3) INSERT order_items (ใส่ subtotal และ cost_at_sale = 0)
-    for (const it of cleanItems) {
-      const itemSubtotal = round2(toNum(it.price) * toNum(it.quantity));
+    // insert order_items (subtotal & cost_at_sale)
+    for (const it of items) {
+      const itemSubtotal = round2(it.price * it.quantity);
+      // คุณอาจดึงต้นทุนจริงจาก menu_items ได้ ถ้ายังไม่ได้ใส่ให้ใช้ 0 ไปก่อน
+      const { rows: costRows } = await client.query(
+        `SELECT COALESCE(cost,0)::numeric AS cost FROM pos.menu_items WHERE menu_item_id=$1 LIMIT 1`,
+        [it.menuItemId]
+      );
+      const costAtSale = round2(costRows?.[0]?.cost ?? 0);
+
       await client.query(
         `INSERT INTO pos.order_items
            (order_id, menu_item_id, quantity, price, discount, tax_amount, subtotal, cost_at_sale, note)
-         VALUES ($1, $2, $3, $4, 0, 0, $5, 0, $6)`,
-        [orderId, it.menuItemId, it.quantity, it.price, itemSubtotal, it.note]
+         VALUES ($1,$2,$3,$4,0,0,$5,$6,$7)`,
+        [orderId, it.menuItemId, it.quantity, it.price, itemSubtotal, costAtSale, it.note]
       );
     }
 
-    // 4) สถานะ paid ก็ย้ำอีกครั้ง (DB trigger/logic อื่น ๆ จะทำงาน)
+    // safety check: ต้องมี order_items อย่างน้อย 1
+    const { rows: chkRows } = await client.query(
+      `SELECT COUNT(*)::int AS cnt FROM pos.order_items WHERE order_id=$1`,
+      [orderId]
+    );
+    if (!chkRows?.[0] || Number(chkRows[0].cnt) <= 0) {
+      throw new Error('No order_items inserted; rolling back');
+    }
+
     if (status === 'paid') {
       await client.query(`UPDATE pos.orders SET status='paid' WHERE order_id=$1`, [orderId]);
     }
 
     await client.query('COMMIT');
-    return res.json({ success: true, data: { id: orderId, orderNumber } });
+    return res.status(201).json({ success: true, data: { id: orderId, orderNumber } });
   } catch (e: any) {
     await client.query('ROLLBACK');
-    console.error(e);
+    console.error('[orders.create] error:', e?.message || e);
     return res.status(500).json({ success: false, error: e?.message || 'Internal error' });
   } finally {
     client.release();
   }
 });
 
-// ---------- GET /api/orders ----------
 router.get('/', async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT order_id AS id, order_number AS "orderNumber",

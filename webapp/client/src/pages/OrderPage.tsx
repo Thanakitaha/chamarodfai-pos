@@ -135,49 +135,21 @@ const OrderPage: React.FC = () => {
     fetchPromotions();
   }, []);
 
-  // ====== อัปเดต: รองรับ /api/menu (หลัก) และ fallback เป็น /api/menu-items ======
-  const normalizeMenu = (arr: any[]): LocalMenuItem[] => {
-    return (arr || []).map((m: any) => ({
-      id: Number(m.id ?? m.menuItemId ?? m.menu_item_id ?? 0),
-      name: String(m.name ?? m.menu_item_name ?? ''),
-      price: Number(m.price ?? m.unitPrice ?? m.unit_price ?? 0),
-      category: m.category ?? m.categoryName ?? m.category_name ?? null,
-      image: m.image ?? m.imageUrl ?? m.image_url ?? null,
-      ...m,
-    }));
-  };
-
-  const tryGet = async (path: string) => {
-    const res = await api.get(path, { validateStatus: () => true });
-    if (res?.status === 404) throw new Error('404'); // <<< ทำให้เงียบลง
-    if (!res?.data) throw new Error('No data');
-    if (res.data?.success && Array.isArray(res.data?.data)) {
-      return normalizeMenu(res.data.data);
-    }
-    if (Array.isArray(res.data)) return normalizeMenu(res.data);
-    if (res.data?.success && res.data?.items && Array.isArray(res.data.items)) {
-      return normalizeMenu(res.data.items);
-    }
-    throw new Error('Unexpected response');
-  };
-
   const fetchMenuItems = async () => {
     try {
-      try {
-        const list = await tryGet('/menu');
-        setMenuItems(list);
-        return;
-      } catch (e: any) {
-        if (e?.message !== '404') throw e; // 404 เฉย ๆ ไม่ต้อง noisy
+      const res = await api.get('/menu-items');
+      if (res.data?.success && Array.isArray(res.data?.data)) {
+        setMenuItems(res.data.data);
+      } else {
+        throw new Error('Invalid response');
       }
-      const list2 = await tryGet('/menu-items');
-      setMenuItems(list2);
-    } catch (error: any) {
-      console.error('fetchMenuItems error:', error?.message || error);
+    } catch (err: any) {
+      console.error('fetchMenuItems error:', err?.message || err);
       setMenuItems([]);
       toast.error('ดึงเมนูไม่สำเร็จ');
     }
   };
+
 
   const fetchPromotions = async () => {
     try {
