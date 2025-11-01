@@ -1,124 +1,186 @@
 // src/services/orders.service.ts
 import { pool } from '../config/db';
-import type { OrderCreateRequest } from '../types';
 
 const STORE_ID = Number(process.env.STORE_ID ?? 1);
 
+type DiscountType = 'percent' | 'percentage' | 'fixed';
+
+type CreateOrderItem = {
+  menuItemId: number;
+  price: number;         // ราคาต่อหน่วย (ไม่รวมโปรฯ)
+  quantity: number;
+  note?: string | null;
+};
+
+type CreateOrderPayload = {
+  items: CreateOrderItem[];
+  promotionId?: number | null;
+  taxAmount?: number;        // สามารถส่งมา หรือคำนวณเอง (ที่นี่ใช้ค่าที่ client ส่ง)
+  serviceCharge?: number;    // เช่น 0
+  orderNumber?: string | null;
+  status?: 'pending' | 'paid';
+};
+
 type PromotionRow = {
-  id: number;
-  discountType: 'percentage' | 'percent' | 'fixed'; // ✅ รองรับทั้งสองคำ
-  discountValue: number;
-  minOrderAmount: number | null;
-  startDate: Date;
-  endDate: Date;
+  promotion_id: number;
+  store_id: number;
+  name: string;
+  description: string | null;
+  discount_type: DiscountType;       // ใน DB เป็น enum ('percent'|'fixed'); ฝั่งโค้ดเผื่อ 'percentage'
+  discount_value: number;
+  min_order_amount: number | null;
+  start_date: Date | string;
+  end_date: Date | string;
   active: boolean;
 };
 
-function computePromotionDiscount(subtotal: number, promo?: PromotionRow | null): number {
+function normalizeDiscountType(t: DiscountType): 'percent' | 'fixed' {
+  if (t === 'percentage') return 'percent';
+  return t;
+}
+
+function isInDateRange(now: Date, start?: Date | string | null, end?: Date | string | null) {
+  const s = start ? new Date(start) : null;
+  const e = end ? new Date(end) : null;
+  if (s && now < s) return false;
+  if (e && now > e) return false;
+  return true;
+}
+
+async function fetchPromotion(promotionId: number): Promise<PromotionRow | null> {
+  const { rows } = await pool.query<PromotionRow>(
+    `SELECT promotion_id, store_id, name, description,
+            discount_type, discount_value, min_order_amount,
+            start_date, end_date, active
+     FROM pos.promotions
+     WHERE promotion_id=$1 AND store_id=$2`,
+    [promotionId, STORE_ID]
+  );
+  return rows[0] ?? null;
+}
+
+function computeDiscount(subtotal: number, promo: PromotionRow | null): number {
   if (!promo) return 0;
   if (!promo.active) return 0;
+  if (!isInDateRange(new Date(), promo.start_date, promo.end_date)) return 0;
+  if (promo.min_order_amount != null && subtotal < Number(promo.min_order_amount)) return 0;
 
-  // ช่วงเวลา
-  const now = new Date();
-  if (promo.startDate && now < new Date(promo.startDate)) return 0;
-  if (promo.endDate && now > new Date(promo.endDate)) return 0;
+  const dtype = normalizeDiscountType(promo.discount_type);
+  const value = Number(promo.discount_value ?? 0);
 
-  // ขั้นต่ำ
-  if (promo.minOrderAmount && subtotal < Number(promo.minOrderAmount)) return 0;
-
-  const t = promo.discountType;
-  if (t === 'percentage' || t === 'percent') {
-    return Math.max(0, (subtotal * Number(promo.discountValue)) / 100);
+  if (dtype === 'fixed') {
+    return Math.max(0, Math.min(value, subtotal));
   }
-  // fixed
-  return Math.min(subtotal, Math.max(0, Number(promo.discountValue)));
+  // percent
+  const pct = Math.max(0, value);
+  const disc = subtotal * (pct / 100);
+  return Math.max(0, Math.min(disc, subtotal));
 }
 
 export async function getNextOrderNumber(): Promise<string> {
-  const { rows } = await pool.query(
-    `SELECT to_char(now(),'YYYYMMDD')||LPAD((COUNT(*)+1)::text, 4, '0') AS next_no
+  const { rows } = await pool.query<{ orderNumber: string }>(
+    `SELECT to_char(now(),'YYYYMMDD')||LPAD((COUNT(*)+1)::text, 4, '0') AS "orderNumber"
      FROM pos.orders
-     WHERE created_at::date = current_date AND store_id = $1`,
-    [STORE_ID]
+     WHERE created_at::date = current_date`
   );
-  return rows[0].next_no as string;
+  return rows[0]?.orderNumber ?? '000000000001';
 }
 
-export async function listOrders() {
-  const { rows } = await pool.query(
-    `SELECT order_id AS id, order_number AS "orderNumber",
-            subtotal, discount, promotion_id AS "promotionId",
-            tax_amount AS "taxAmount", service_charge AS "serviceCharge",
-            total, status, created_at AS "createdAt"
-     FROM pos.orders
-     WHERE store_id = $1
-     ORDER BY created_at DESC
-     LIMIT 200`,
-    [STORE_ID]
-  );
-  return rows;
-}
+export async function createOrder(payload: CreateOrderPayload) {
+  const {
+    items,
+    promotionId = null,
+    taxAmount = 0,
+    serviceCharge = 0,
+    orderNumber = null,
+    status = 'pending',
+  } = payload;
 
-export async function createOrder(payload: OrderCreateRequest): Promise<{ id: number; orderNumber: string }> {
-  // status: บังคับอยู่ใน ('open','paid'); อย่าส่ง 'completed'
-  const status = payload.status === 'paid' ? 'paid' : 'open';
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('Order must have at least one item');
+  }
+
+  // คำนวณ item_subtotal (ราคา*จำนวน) ตั้งแต่ตรงนี้ —> ป้องกัน NULL
+  const sanitizedItems = items.map((it) => {
+    const price = Number(it.price ?? 0);
+    const qty = Number(it.quantity ?? 0);
+    const lineSubtotal = price * qty;
+    return {
+      menuItemId: Number(it.menuItemId),
+      price,
+      quantity: qty,
+      note: it.note ?? null,
+      itemSubtotal: lineSubtotal,
+    };
+  });
+
+  const orderSubtotal = sanitizedItems.reduce((s, it) => s + it.itemSubtotal, 0);
+
+  // โหลดโปรฯ (ถ้ามี) และคำนวณ discount
+  let promoRow: PromotionRow | null = null;
+  if (promotionId != null) {
+    promoRow = await fetchPromotion(Number(promotionId));
+  }
+  const discount = computeDiscount(orderSubtotal, promoRow);
+
+  const subMinusDisc = Math.max(0, orderSubtotal - discount);
+  const taxAmt = Math.max(0, Number(taxAmount ?? 0));
+  const svc = Math.max(0, Number(serviceCharge ?? 0));
+  const total = subMinusDisc + taxAmt + svc;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // โหลดโปรโมชันถ้ามี
-    let promo: PromotionRow | null = null;
-    if (payload.promotionId) {
-      const pr = await client.query(
-        `SELECT promotion_id AS id,
-                discount_type AS "discountType",
-                discount_value AS "discountValue",
-                min_order_amount AS "minOrderAmount",
-                start_at AS "startDate", end_at AS "endDate",
-                active
-         FROM pos.promotions
-         WHERE promotion_id = $1 AND store_id = $2`,
-        [payload.promotionId, STORE_ID]
-      );
-      promo = pr.rows[0] || null;
-    }
+    const computedOrderNumber = orderNumber ?? (await getNextOrderNumber());
 
-    // สรุปยอด
-    const subtotal = payload.items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
-    const discount = computePromotionDiscount(subtotal, promo);
-    const taxAmount = Number(payload.taxAmount ?? 0);
-    const serviceCharge = Number(payload.serviceCharge ?? 0);
-    const total = Math.max(0, subtotal - discount + taxAmount + serviceCharge);
-
-    const orderNumber = await getNextOrderNumber();
-
-    const ins = await client.query(
+    // insert orders
+    const orderIns = await client.query<{ order_id: number }>(
       `INSERT INTO pos.orders
          (store_id, order_number, subtotal, discount, promotion_id, tax_amount, service_charge, total, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       VALUES
+         ($1,       $2,           $3,       $4,       $5,           $6,         $7,            $8,    $9)
        RETURNING order_id`,
-      [STORE_ID, orderNumber, subtotal, discount, payload.promotionId ?? null, taxAmount, serviceCharge, total, status]
+      [
+        STORE_ID,
+        computedOrderNumber,
+        orderSubtotal,
+        discount,
+        promotionId,
+        taxAmt,
+        svc,
+        total,
+        status,
+      ]
     );
-    const orderId: number = ins.rows[0].order_id;
 
-    // รายการสินค้า
-    for (const it of payload.items) {
+    const orderId = orderIns.rows[0].order_id;
+
+    // insert order_items (*** ระวังอย่าให้ subtotal เป็น NULL ***)
+    for (const it of sanitizedItems) {
       await client.query(
         `INSERT INTO pos.order_items
-           (order_id, menu_item_id, quantity, price, discount, tax_amount)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [orderId, it.menuItemId, it.quantity, it.price, 0, 0]
+           (order_id, menu_item_id, price, quantity, subtotal, note)
+         VALUES
+           ($1,       $2,           $3,    $4,       $5,       $6)`,
+        [
+          orderId,
+          it.menuItemId,
+          it.price,
+          it.quantity,
+          it.itemSubtotal, // คำนวณมาก่อนแล้ว → ไม่ NULL
+          it.note,
+        ]
       );
     }
 
     if (status === 'paid') {
-      // trigger ฝั่ง DB จะหักสต็อก/COGS ให้อัตโนมัติอยู่แล้ว
+      // ถ้าคุณมี trigger ฝั่ง DB หักสต็อก/COGS จะทำงานเอง
       await client.query(`UPDATE pos.orders SET status='paid' WHERE order_id=$1`, [orderId]);
     }
 
     await client.query('COMMIT');
-    return { id: orderId, orderNumber };
+    return { id: orderId, orderNumber: computedOrderNumber };
   } catch (e) {
     await client.query('ROLLBACK');
     throw e;

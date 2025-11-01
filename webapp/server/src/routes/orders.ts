@@ -3,6 +3,9 @@ import { pool } from '../config/db';
 
 const router = Router();
 
+// ปรับตามร้านของคุณถ้าจำเป็น
+const STORE_ID = Number(process.env.STORE_ID ?? 1);
+
 type CreateOrderItemPayload = {
   menuItemId: number;
   price: number;
@@ -39,27 +42,39 @@ async function getPromotion(promotionId: number | null) {
            start_at, end_at, active
     FROM pos.promotions
     WHERE promotion_id = $1
+      AND store_id = $2
       AND active = TRUE
       AND now() >= start_at
       AND now() <= end_at
     LIMIT 1
   `;
-  const { rows } = await pool.query(sql, [promotionId]);
+  const { rows } = await pool.query(sql, [promotionId, STORE_ID]);
   return rows[0] || null;
 }
 
 function calcDiscount(subtotal: number, promo: any): number {
   if (!promo) return 0;
-  const minOk = promo.min_order_amount == null || subtotal >= Number(promo.min_order_amount);
+
+  const minOk =
+    promo.min_order_amount == null ||
+    subtotal >= Number(promo.min_order_amount);
+
   if (!minOk) return 0;
+
   const type = String(promo.discount_type || '').toLowerCase();
   const val = Number(promo.discount_value || 0);
-  if (type === 'percent' || type === 'percentage') return Math.max(0, subtotal * (val / 100));
-  if (type === 'fixed') return Math.min(subtotal, Math.max(0, val));
+
+  if (type === 'percent' || type === 'percentage') {
+    const d = subtotal * (val / 100);
+    return Math.max(0, Math.min(d, subtotal));
+  }
+  if (type === 'fixed') {
+    return Math.max(0, Math.min(val, subtotal));
+  }
   return 0;
 }
 
-// ---------- GET /api/orders ----------
+// ---------- POST /api/orders ----------
 router.post('/', async (req, res) => {
   const payload = req.body as CreateOrderPayload;
 
@@ -67,33 +82,79 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ success: false, error: 'No items' });
   }
 
+  // เตรียม items ให้สะอาด + คำนวณ line subtotal ตั้งแต่ตรงนี้
+  const items = payload.items.map((it) => {
+    const price = toNum(it.price, 0);
+    const qty = toNum(it.quantity, 0);
+    const lineSubtotal = round2(price * qty);
+    return {
+      menuItemId: toNum(it.menuItemId, 0),
+      price: round2(price),
+      quantity: qty,
+      note: it.note ?? null,
+      lineSubtotal,
+    };
+  });
+
+  const subtotalRaw = items.reduce((s, it) => s + it.lineSubtotal, 0);
+  const subtotal = round2(subtotalRaw);
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
+    // โหลดโปรฯ (ถ้ามี) แล้วคำนวณส่วนลดจาก subtotal
     const promo = await getPromotion(payload.promotionId ?? null);
-    const subtotal = payload.items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
-    const discount = calcDiscount(subtotal, promo);
-    const total = subtotal - discount + Number(payload.taxAmount || 0) + Number(payload.serviceCharge || 0);
+    const discount = round2(calcDiscount(subtotal, promo));
 
+    const taxAmount = round2(toNum(payload.taxAmount, 0));
+    const serviceCharge = round2(toNum(payload.serviceCharge, 0));
+
+    // กันติดลบโดยรวม
+    const total = round2(Math.max(0, subtotal - discount) + taxAmount + serviceCharge);
+
+    // สร้าง order
     const orderIns = await client.query(
-      `INSERT INTO pos.orders (store_id, subtotal, discount, promotion_id, tax_amount, service_charge, total, status)
-       VALUES (1, $1, $2, $3, $4, $5, $6, $7) RETURNING order_id, order_number`,
-      [subtotal, discount, payload.promotionId ?? null, payload.taxAmount ?? 0, payload.serviceCharge ?? 0, total, payload.status ?? 'paid']
+      `INSERT INTO pos.orders
+         (store_id, subtotal, discount, promotion_id, tax_amount, service_charge, total, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING order_id, order_number`,
+      [
+        STORE_ID,
+        subtotal,
+        discount,
+        payload.promotionId ?? null,
+        taxAmount,
+        serviceCharge,
+        total,
+        payload.status ?? 'paid',
+      ]
     );
 
     const orderId = Number(orderIns.rows[0].order_id);
     const orderNumber = orderIns.rows[0].order_number as string;
 
-    for (const it of payload.items) {
+    // แทรก order_items โดย "ใส่คอลัมน์ subtotal" อย่างชัดเจน
+    for (const it of items) {
       await client.query(
         `INSERT INTO pos.order_items
-           (order_id, menu_item_id, quantity, price, discount, tax_amount, note)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [orderId, it.menuItemId, it.quantity, it.price, 0, 0, it.note ?? null]
+           (order_id, menu_item_id, quantity, price, subtotal, discount, tax_amount, note)
+         VALUES
+           ($1,       $2,           $3,       $4,    $5,       $6,       $7,        $8)`,
+        [
+          orderId,
+          it.menuItemId,
+          it.quantity,
+          it.price,
+          it.lineSubtotal, // <<<<<< สำคัญ: ไม่ปล่อยเป็น NULL
+          0,               // per-line discount ถ้ายังไม่ใช้ แก้ไขได้ภายหลัง
+          0,               // per-line tax ถ้ายังไม่ใช้
+          it.note,
+        ]
       );
     }
 
+    // ถ้าต้องการ mark paid ทันที
     if ((payload.status ?? 'paid') === 'paid') {
       await client.query(`UPDATE pos.orders SET status='paid' WHERE order_id=$1`, [orderId]);
     }
@@ -109,6 +170,7 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ---------- GET /api/orders ----------
 router.get('/', async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT order_id AS id, order_number AS "orderNumber",
@@ -121,6 +183,7 @@ router.get('/', async (_req, res) => {
   res.json({ success: true, data: rows });
 });
 
+// ---------- GET /api/orders/next-number ----------
 router.get('/next-number', async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT to_char(now(),'YYYYMMDD')||LPAD((COUNT(*)+1)::text, 4, '0') AS "orderNumber"

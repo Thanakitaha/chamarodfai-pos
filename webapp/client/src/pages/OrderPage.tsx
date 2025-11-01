@@ -63,37 +63,6 @@ const TOPPINGS: ReadonlyArray<LocalTopping> = [
   { id: 'tp_cheese', name: 'ชีสโฟม', price: 10 },
 ] as const;
 
-const normalizeOrderForUI = (o: any) => {
-  const items = Array.isArray(o.items)
-    ? o.items.map((it: any) => ({
-        id: Number(it.id ?? it.order_item_id ?? 0),
-        orderId: Number(it.orderId ?? it.order_id ?? 0),
-        menuItemId: Number(it.menuItemId ?? it.menu_item_id ?? 0),
-        name: it.name ?? it.menu_item_name ?? '',
-        quantity: Number(it.quantity ?? 1),
-        price: Number(it.price ?? 0),
-        subtotal: Number(it.subtotal ?? (Number(it.price ?? 0) * Number(it.quantity ?? 1))),
-        note: typeof it.note === 'string' ? it.note : it.note ? JSON.stringify(it.note) : null,
-      }))
-    : [];
-
-  const rawPid = (o.promotionId ?? o.promotion_id);
-  const promotionId = (rawPid === undefined || rawPid === null)
-    ? null
-    : (Number(rawPid) || null);
-
-  return {
-    id: Number(o.id ?? o.order_id ?? 0),
-    orderNumber: o.orderNumber ?? o.order_number ?? '',
-    promotionId,
-    items,
-    subtotal: Number(o.subtotal ?? 0),
-    discount: Number(o.discount ?? 0),
-    total: Number(o.total ?? 0),
-    status: o.status ?? 'paid',
-  };
-};
-
 const OrderPage: React.FC = () => {
   const [menuItems, setMenuItems] = useState<LocalMenuItem[]>([]);
   const [promotions, setPromotions] = useState<LocalPromotion[]>([]);
@@ -147,8 +116,10 @@ const OrderPage: React.FC = () => {
       .sort()
       .join('+')}`;
 
+    // สำคัญ: ใส่ price ให้เท่ากับ customPrice เพื่อให้ cart และ payload ใช้ราคาจริง
     addItem({
       ...customizingItem,
+      price: customPrice,
       customPrice,
       sweetness: selectedSweetness,
       toppings: [...selectedToppings],
@@ -227,7 +198,6 @@ const OrderPage: React.FC = () => {
   };
 
   const categories = ['ทั้งหมด', ...Array.from(new Set(menuItems.map((i) => i.category ?? 'อื่น ๆ')))];
-
   const filteredMenu = selectedCategory === 'ทั้งหมด'
     ? menuItems
     : menuItems.filter((i) => (i.category ?? 'อื่น ๆ') === selectedCategory);
@@ -255,7 +225,7 @@ const OrderPage: React.FC = () => {
       const payload = {
         items: cartItems.map((it: LocalCartItem) => ({
           menuItemId: Number(it.menuItemId),
-          price: Number(it.price),
+          price: Number(it.price),        // ต้องเป็นราคาต่อชิ้นจริง ณ ปัจจุบันในตะกร้า
           quantity: Number(it.quantity),
           // แนบ sweetness/toppings ลง note เป็น JSON string
           note: JSON.stringify({
@@ -277,15 +247,37 @@ const OrderPage: React.FC = () => {
         status: 'paid' as const,
       };
 
-      const res = await orderAPI.create(payload);
-      if (!res?.success) {
-        throw new Error(res?.error || 'สร้างออเดอร์ไม่สำเร็จ');
+      // ปล่อยเป็น any เพื่อรองรับหลายรูปแบบการคืนค่าของ orderAPI.create
+      const res: any = await orderAPI.create(payload);
+
+      // ดึง orderNumber แบบยืดหยุ่น (รองรับทั้งห่อ success/data หรือคืนตรง ๆ)
+      const orderNumber =
+        res?.orderNumber ??
+        res?.data?.orderNumber ??
+        res?.data?.data?.orderNumber ??
+        '';
+
+      if (!orderNumber) {
+        throw new Error(
+          res?.error ||
+          res?.data?.error ||
+          'สร้างออเดอร์ไม่สำเร็จ'
+        );
       }
 
-      const normalized = normalizeOrderForUI(res.data);
-      if (!Array.isArray(normalized.items)) normalized.items = [];
+      // แสดงใบเสร็จทันทีด้วยค่าจากตะกร้า (backend คิดจริงแล้ว)
+      setCompletedOrder({
+        orderNumber,
+        promotionId: payload.promotionId,
+        items: cartItems,
+        subtotal,
+        discount,
+        taxAmount: 0,
+        serviceCharge: 0,
+        total,
+        status: 'paid',
+      });
 
-      setCompletedOrder(normalized);
       clearCart();
       setShowReceipt(true);
       toast.success('ชำระเงินสำเร็จ');
