@@ -15,6 +15,14 @@ const toNum = (v: any, d = 0) => {
   return Number.isFinite(n) ? n : d;
 };
 
+// ---- make image URL absolute (handle '/uploads/...' or relative path) ----
+const toAbsoluteUrl = (url?: string | null): string => {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  const origin = window.location.origin;
+  return `${origin}${url.startsWith('/') ? url : `/${url}`}`;
+};
+
 // ---- normalize order payload from API (รองรับ {order:{...}} หรือ {...}, และ snake/camel) ----
 const normalizeOrderForUI = (raw: any) => {
   const o = raw?.order ?? raw ?? {};
@@ -178,45 +186,55 @@ const OrderPage: React.FC = () => {
 
           {/* Menu Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">
-            {filteredMenuItems.map((item) => (
-              <div
-                key={item.id}
-                className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => addItem(item)}
-              >
-                <div className="aspect-square bg-gray-100 rounded-lg mb-2 sm:mb-3 flex items-center justify-center">
-                  {item.image ? (
-                    <img
-                      src={item.image}
-                      alt={item.name}
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                  ) : (
-                    <div className="text-gray-400 text-2xl sm:text-4xl">🥤</div>
-                  )}
+            {filteredMenuItems.map((item) => {
+              // รองรับทั้ง item.image และ item.image_url ที่ backend อาจส่งมา
+              const rawImg = (item as any).image ?? (item as any).image_url ?? '';
+              const imgSrc = rawImg ? toAbsoluteUrl(String(rawImg)) : '';
+
+              return (
+                <div
+                  key={item.id}
+                  className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => addItem(item)}
+                >
+                  <div className="aspect-square bg-gray-100 rounded-lg mb-2 sm:mb-3 flex items-center justify-center">
+                    {imgSrc ? (
+                      <img
+                        src={imgSrc}
+                        alt={item.name}
+                        className="w-full h-full object-cover rounded-lg"
+                        onError={(e) => {
+                          // กันรูป 404 แล้ว alt ไม่ขึ้น
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="text-gray-400 text-2xl sm:text-4xl">🥤</div>
+                    )}
+                  </div>
+                  <h3 className="font-semibold text-gray-800 mb-1 text-sm sm:text-base line-clamp-1">
+                    {item.name}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-gray-600 mb-2 line-clamp-2">
+                    {item.description}
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm sm:text-lg font-bold text-primary-600">
+                      ฿{toNum(item.price).toFixed(2)}
+                    </span>
+                    <button
+                      className="bg-primary-600 text-white p-1.5 sm:p-2 rounded-lg hover:bg-primary-700 transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addItem(item);
+                      }}
+                    >
+                      <Plus className="w-3 h-3 sm:w-4 sm:h-4" />
+                    </button>
+                  </div>
                 </div>
-                <h3 className="font-semibold text-gray-800 mb-1 text-sm sm:text-base line-clamp-1">
-                  {item.name}
-                </h3>
-                <p className="text-xs sm:text-sm text-gray-600 mb-2 line-clamp-2">
-                  {item.description}
-                </p>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm sm:text-lg font-bold text-primary-600">
-                    ฿{item.price.toFixed(2)}
-                  </span>
-                  <button
-                    className="bg-primary-600 text-white p-1.5 sm:p-2 rounded-lg hover:bg-primary-700 transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      addItem(item);
-                    }}
-                  >
-                    <Plus className="w-3 h-3 sm:w-4 sm:h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

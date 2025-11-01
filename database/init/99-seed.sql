@@ -17,20 +17,29 @@ END$$;
 
 -- 1) หมวดหมู่: Coffee
 INSERT INTO pos.menu_categories (store_id, name, description, sort_order, active)
-SELECT s.store_id, 'Coffee', 'Coffee-based drinks', 1, TRUE
+SELECT s.store_id, 'กาแฟ', 'เครื่องดื่มที่มีส่วนผสมของกาแฟ', 1, TRUE
 FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s
 WHERE NOT EXISTS (
   SELECT 1 FROM pos.menu_categories mc
-  WHERE mc.store_id = s.store_id AND mc.name = 'Coffee'
+  WHERE mc.store_id = s.store_id AND mc.name = 'กาแฟ'
 );
 
 -- 2) หมวดหมู่: Tea
 INSERT INTO pos.menu_categories (store_id, name, description, sort_order, active)
-SELECT s.store_id, 'Tea', 'Tea-based drinks', 2, TRUE
+SELECT s.store_id, 'ชา', 'เครื่องดื่มที่มีส่วนผสมของชา', 2, TRUE
 FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s
 WHERE NOT EXISTS (
   SELECT 1 FROM pos.menu_categories mc
-  WHERE mc.store_id = s.store_id AND mc.name = 'Tea'
+  WHERE mc.store_id = s.store_id AND mc.name = 'ชา'
+);
+
+-- 3) หมวดหมู่: Topping
+INSERT INTO pos.menu_categories (store_id, name, description, sort_order, active)
+SELECT s.store_id, 'ท็อปปิ้ง', 'ส่วนประกอบเพิ่มเติม', 3, TRUE
+FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s
+WHERE NOT EXISTS (
+  SELECT 1 FROM pos.menu_categories mc
+  WHERE mc.store_id = s.store_id AND mc.name = 'ท็อปปิ้ง'
 );
 
 -- -- 3) เมนู Coffee (Americano, Latte) — ทำเมื่อมี category 'Coffee'
@@ -59,7 +68,7 @@ SELECT
   s.store_id,
   (SELECT category_id
      FROM pos.menu_categories
-     WHERE store_id = s.store_id AND name = 'Tea'
+     WHERE store_id = s.store_id AND name = 'ชา'
      ORDER BY category_id ASC LIMIT 1),
   v.name, v.price, v.cost, TRUE, 0
 FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s,
@@ -69,7 +78,7 @@ FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s,
      ) AS v(name, price, cost)
 WHERE EXISTS (
   SELECT 1 FROM pos.menu_categories
-  WHERE store_id = s.store_id AND name = 'Tea'
+  WHERE store_id = s.store_id AND name = 'ชา'
 )
 ON CONFLICT (store_id, name) DO NOTHING;
 
