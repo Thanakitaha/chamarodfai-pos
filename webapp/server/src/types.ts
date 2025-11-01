@@ -67,3 +67,24 @@ export type OrderRow = {
   status: string;
   createdAt: string;
 };
+
+export type Topping = { id: string; name: string; price: number };
+
+export type CartItem = {
+  id: number;            // = menuItem.id
+  menuItemId: number;    // = menuItem.id
+  price: number;         // ราคาต่อชิ้น (รวมท็อปปิ้งแล้ว)
+  quantity: number;
+  menuItem?: MenuItem;
+
+  sweetness?: 'extra' | 'normal' | 'less' | 'none';
+  toppings?: Topping[];
+  variantKey?: string;
+};
+
+// ใช้ใน unwrap ของ API
+export type ApiResponse<T> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+};

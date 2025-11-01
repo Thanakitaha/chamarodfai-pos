@@ -7,6 +7,7 @@ type CreateOrderItemPayload = {
   menuItemId: number;
   price: number;
   quantity: number;
+  note?: string | null;
 };
 
 type CreateOrderPayload = {
@@ -30,7 +31,8 @@ function round2(n: any): number {
   return Math.round((v + Number.EPSILON) * 100) / 100;
 }
 
-async function getPromotion(promotionId: number) {
+async function getPromotion(promotionId: number | null) {
+  if (!promotionId) return null;
   const sql = `
     SELECT promotion_id, store_id, name, description,
            discount_type, discount_value, min_order_amount,
@@ -48,172 +50,84 @@ async function getPromotion(promotionId: number) {
 
 function calcDiscount(subtotal: number, promo: any): number {
   if (!promo) return 0;
-  const minAmt = toNum(promo.min_order_amount, 0);
-  if (subtotal < minAmt) return 0;
-
-  const typ = String(promo.discount_type) as 'percent' | 'fixed';
-  const val = toNum(promo.discount_value, 0);
-
-  if (typ === 'percent') {
-    return round2((subtotal * val) / 100);
-  }
-  return round2(Math.min(val, subtotal));
+  const minOk = promo.min_order_amount == null || subtotal >= Number(promo.min_order_amount);
+  if (!minOk) return 0;
+  const type = String(promo.discount_type || '').toLowerCase();
+  const val = Number(promo.discount_value || 0);
+  if (type === 'percent' || type === 'percentage') return Math.max(0, subtotal * (val / 100));
+  if (type === 'fixed') return Math.min(subtotal, Math.max(0, val));
+  return 0;
 }
 
 // ---------- GET /api/orders ----------
-router.get('/', async (_req, res, next) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT o.*, p.name AS promotion_name
-      FROM pos.orders o
-      LEFT JOIN pos.promotions p ON p.promotion_id = o.promotion_id
-      ORDER BY o.created_at DESC
-      LIMIT 200
-    `);
-    res.json({ success: true, data: rows });
-  } catch (e) { next(e); }
-});
+router.post('/', async (req, res) => {
+  const payload = req.body as CreateOrderPayload;
 
-// ---------- GET /api/orders/next-number ----------
-router.get('/next-number', async (_req, res, next) => {
-  try {
-    res.json({ success: true, data: { orderNumber: 'AUTO' } });
-  } catch (e) { next(e); }
-});
+  if (!payload?.items?.length) {
+    return res.status(400).json({ success: false, error: 'No items' });
+  }
 
-// ---------- POST /api/orders ----------
-router.post('/', async (req, res, next) => {
   const client = await pool.connect();
   try {
-    const body: CreateOrderPayload = (req.body || {}) as any;
-    const items = Array.isArray(body.items) ? body.items : [];
-
-    if (items.length === 0) {
-      return res.status(400).json({ success: false, error: 'no_items' });
-    }
-
-    // validate & normalize items
-    const itemRows = items.map((raw, idx) => {
-      const menuItemId = toNum(raw.menuItemId, NaN);
-      const price = round2(raw.price);
-      const quantity = round2(raw.quantity); // รองรับ .5 แก้ว, แต่คุณมี CHECK > 0 อยู่แล้ว
-
-      if (!Number.isFinite(menuItemId)) {
-        throw new Error(`invalid_item_${idx}_menuItemId`);
-      }
-      if (!Number.isFinite(price) || price < 0) {
-        throw new Error(`invalid_item_${idx}_price`);
-      }
-      if (!Number.isFinite(quantity) || quantity <= 0) {
-        throw new Error(`invalid_item_${idx}_quantity`);
-      }
-
-      const itemSubtotal = round2(price * quantity);
-      if (!Number.isFinite(itemSubtotal) || itemSubtotal < 0) {
-        throw new Error(`invalid_item_${idx}_subtotal`);
-      }
-
-      return { menuItemId, price, quantity, itemSubtotal };
-    });
-
-    const taxAmount = round2(body.taxAmount ?? 0);
-    const serviceCharge = round2(body.serviceCharge ?? 0);
-    const status: 'open' | 'paid' = body.status === 'paid' ? 'paid' : 'open';
-
-    const orderSubtotal = round2(itemRows.reduce((s, x) => s + x.itemSubtotal, 0));
-
-    // promotion
-    let promoRow: any = null;
-    if (body.promotionId != null && Number.isFinite(Number(body.promotionId))) {
-      promoRow = await getPromotion(Number(body.promotionId));
-    }
-    const orderDiscount = round2(calcDiscount(orderSubtotal, promoRow));
-    const orderTotal = round2(orderSubtotal - orderDiscount + taxAmount + serviceCharge);
-    if (!Number.isFinite(orderTotal) || orderTotal < 0) {
-      return res.status(400).json({ success: false, error: 'invalid_total' });
-    }
-
     await client.query('BEGIN');
 
-    const insertOrderSql = `
-      INSERT INTO pos.orders
-        (store_id, customer_id, cashier_id,
-         subtotal, discount, promotion_id,
-         tax_amount, service_charge, total,
-         status, note)
-      VALUES
-        ($1,       NULL,       NULL,
-         $2,       $3,         $4,
-         $5,       $6,         $7,
-         $8,       NULL)
-      RETURNING *
-    `;
-    const orderParams = [
-      1,
-      orderSubtotal,
-      orderDiscount,
-      promoRow ? promoRow.promotion_id : null,
-      taxAmount,
-      serviceCharge,
-      orderTotal,
-      status,
-    ];
-    const { rows: orderRows } = await client.query(insertOrderSql, orderParams);
-    const order = orderRows[0];
+    const promo = await getPromotion(payload.promotionId ?? null);
+    const subtotal = payload.items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
+    const discount = calcDiscount(subtotal, promo);
+    const total = subtotal - discount + Number(payload.taxAmount || 0) + Number(payload.serviceCharge || 0);
 
-    // insert items (LOG params กันเหนียว)
-    const insertItemSql = `
-      INSERT INTO pos.order_items
-        (order_id, menu_item_id, quantity, price, discount, tax_amount, subtotal, note)
-      VALUES
-        ($1,       $2,          $3,       $4,    $5,       $6,         $7,       NULL)
-      RETURNING *
-    `;
+    const orderIns = await client.query(
+      `INSERT INTO pos.orders (store_id, subtotal, discount, promotion_id, tax_amount, service_charge, total, status)
+       VALUES (1, $1, $2, $3, $4, $5, $6, $7) RETURNING order_id, order_number`,
+      [subtotal, discount, payload.promotionId ?? null, payload.taxAmount ?? 0, payload.serviceCharge ?? 0, total, payload.status ?? 'paid']
+    );
 
-    const insertedItems = [];
-    for (const r of itemRows) {
-      const params = [
-        order.order_id,
-        r.menuItemId,
-        r.quantity,
-        r.price,
-        0,
-        0,
-        r.itemSubtotal, // ✅ ต้องเป็นตัวเลข (ไม่ใช่ null/NaN)
-      ];
+    const orderId = Number(orderIns.rows[0].order_id);
+    const orderNumber = orderIns.rows[0].order_number as string;
 
-      // debug log — จะเห็นทันทีถ้าเป็น null/NaN
-      console.log('[order_items.insert.params]', params);
+    for (const it of payload.items) {
+      await client.query(
+        `INSERT INTO pos.order_items
+           (order_id, menu_item_id, quantity, price, discount, tax_amount, note)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [orderId, it.menuItemId, it.quantity, it.price, 0, 0, it.note ?? null]
+      );
+    }
 
-      // ป้องกันซ้ำชั้น
-      if (!Number.isFinite(toNum(r.itemSubtotal, NaN))) {
-        throw new Error('item_subtotal_nan');
-      }
-
-      const { rows } = await client.query(insertItemSql, params);
-      insertedItems.push(rows[0]);
+    if ((payload.status ?? 'paid') === 'paid') {
+      await client.query(`UPDATE pos.orders SET status='paid' WHERE order_id=$1`, [orderId]);
     }
 
     await client.query('COMMIT');
-
-    res.json({
-      success: true,
-      data: {
-        order: { ...order, items: insertedItems },
-      },
-    });
+    return res.json({ success: true, data: { id: orderId, orderNumber } });
   } catch (e: any) {
-    try { await (await pool.connect()).query('ROLLBACK'); } catch {}
-    // ใช้ ROLLBACK กับ client ที่เปิดไว้
-    try { await (await pool.connect()).release(); } catch {}
-    // ส่งรายละเอียด error กลับให้เห็นง่ายขึ้นระหว่างดีบัก
-    console.error('[orders.create.error]', e?.message, e);
-    (res as any).status?.(500)?.json?.({
-      success: false,
-      error: 'Internal error',
-      detail: String(e?.message ?? e),
-    }) ?? next(e);
+    await client.query('ROLLBACK');
+    console.error(e);
+    return res.status(500).json({ success: false, error: e?.message || 'Internal error' });
+  } finally {
+    client.release();
   }
+});
+
+router.get('/', async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT order_id AS id, order_number AS "orderNumber",
+            subtotal, discount, promotion_id AS "promotionId",
+            tax_amount AS "taxAmount", service_charge AS "serviceCharge",
+            total, status, created_at AS "createdAt"
+     FROM pos.orders
+     ORDER BY created_at DESC`
+  );
+  res.json({ success: true, data: rows });
+});
+
+router.get('/next-number', async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT to_char(now(),'YYYYMMDD')||LPAD((COUNT(*)+1)::text, 4, '0') AS "orderNumber"
+     FROM pos.orders
+     WHERE created_at::date = current_date`
+  );
+  res.json({ success: true, data: rows[0] });
 });
 
 export default router;

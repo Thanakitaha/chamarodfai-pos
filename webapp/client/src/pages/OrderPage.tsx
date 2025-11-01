@@ -2,20 +2,17 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Minus, Trash2, ShoppingCart, Receipt } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { orderAPI } from '../services/api';
+import api, { orderAPI, promotionAPI } from '../services/api'; // ใช้ api.ts เดิมของคุณ
 import { useCartStore } from '../stores/cartStore';
-import apiConfig from '../services/api-config';
-import { MenuItem, Promotion } from '../types';
+import { MenuItem, Promotion, Topping, CartItem } from '../types';
 import PaymentConfirmation from '../components/PaymentConfirmation';
 import ReceiptModal from '../components/ReceiptModal';
 
-// ---- helpers: number/string safe casting ----
 const toNum = (v: any, d = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : d;
 };
 
-// ---- make image URL absolute (handle '/uploads/...' or relative path) ----
 const toAbsoluteUrl = (url?: string | null): string => {
   if (!url) return '';
   if (/^https?:\/\//i.test(url)) return url;
@@ -23,18 +20,44 @@ const toAbsoluteUrl = (url?: string | null): string => {
   return `${origin}${url.startsWith('/') ? url : `/${url}`}`;
 };
 
-// ---- normalize order payload from API (รองรับ {order:{...}} หรือ {...}, และ snake/camel) ----
-const normalizeOrderForUI = (raw: any) => {
-  const o = raw?.order ?? raw ?? {};
-  const items = Array.isArray(o.items) ? o.items : [];
+const SWEETNESS = [
+  { key: 'extra', label: 'เพิ่มหวาน' },
+  { key: 'normal', label: 'หวานปกติ' },
+  { key: 'less', label: 'หวานน้อย' },
+  { key: 'none', label: 'ไม่หวาน' },
+] as const;
+
+type SweetnessKey = typeof SWEETNESS[number]['key'];
+
+const TOPPINGS: ReadonlyArray<Topping> = [
+  { id: 'tp_pearl', name: 'ไข่มุก', price: 5 },
+  { id: 'tp_pudding', name: 'พุดดิ้ง', price: 7 },
+  { id: 'tp_grass', name: 'เฉาก๊วย', price: 5 },
+  { id: 'tp_cheese', name: 'ชีสโฟม', price: 10 },
+] as const;
+
+const normalizeOrderForUI = (o: any) => {
+  const items = Array.isArray(o.items)
+    ? o.items.map((it: any) => ({
+        id: Number(it.id ?? it.order_item_id ?? 0),
+        orderId: Number(it.orderId ?? it.order_id ?? 0),
+        menuItemId: Number(it.menuItemId ?? it.menu_item_id ?? 0),
+        name: it.name ?? it.menu_item_name ?? '',
+        quantity: Number(it.quantity ?? 1),
+        price: Number(it.price ?? 0),
+        subtotal: Number(it.subtotal ?? (Number(it.price ?? 0) * Number(it.quantity ?? 1))),
+        note: typeof it.note === 'string' ? it.note : it.note ? JSON.stringify(it.note) : null,
+      }))
+    : [];
 
   return {
+    id: Number(o.id ?? o.order_id ?? 0),
     orderNumber: o.orderNumber ?? o.order_number ?? '',
-    createdAt: o.createdAt ?? o.created_at ?? undefined,
-    items, // ปล่อยดิบไว้ให้ ReceiptModal จัดการ layer สุดท้ายอีกชั้น (เราแค่กันไม่ให้ undefined)
-    subtotal: toNum(o.subtotal, 0),
-    discount: toNum(o.discount, 0),
-    total: toNum(o.total, 0),
+    promotionId: o.promotionId ?? Number(o.promotion_id ?? 0) || null,
+    items,
+    subtotal: Number(o.subtotal ?? 0),
+    discount: Number(o.discount ?? 0),
+    total: Number(o.total ?? 0),
     status: o.status ?? 'paid',
   };
 };
@@ -46,7 +69,11 @@ const OrderPage: React.FC = () => {
   const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+
+  // โมดัลปรับแต่ง
+  const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
+  const [selectedSweetness, setSelectedSweetness] = useState<SweetnessKey>('normal');
+  const [selectedToppings, setSelectedToppings] = useState<Topping[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
@@ -62,49 +89,87 @@ const OrderPage: React.FC = () => {
     applyPromotion,
   } = useCartStore();
 
+  const openCustomize = (item: MenuItem) => {
+    setCustomizingItem(item);
+    setSelectedSweetness('normal');
+    setSelectedToppings([]);
+  };
+
+  const toggleTopping = (tp: Topping) => {
+    setSelectedToppings((prev) => {
+      const exists = prev.find((t) => t.id === tp.id);
+      if (exists) return prev.filter((t) => t.id !== tp.id);
+      return [...prev, tp];
+    });
+  };
+
+  const confirmCustomize = () => {
+    if (!customizingItem) return;
+    const toppingsTotal = selectedToppings.reduce<number>(
+      (s: number, t: Topping) => s + Number(t.price || 0),
+      0
+    );
+    const customPrice = Number(customizingItem.price) + toppingsTotal;
+    const variantKey = `${customizingItem.id}|${selectedSweetness}|${selectedToppings
+      .map((t: Topping) => t.id)
+      .sort()
+      .join('+')}`;
+
+    addItem({
+      ...customizingItem,
+      customPrice,
+      sweetness: selectedSweetness,
+      toppings: [...selectedToppings],
+      variantKey,
+    } as any);
+
+    setCustomizingItem(null);
+    toast.success('เพิ่มลงตะกร้าแล้ว');
+  };
+
   useEffect(() => {
     fetchMenuItems();
     fetchPromotions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchMenuItems = async () => {
     try {
-      const response = await apiConfig.menu.getAll();
-      if (response?.success && Array.isArray(response.data)) {
-        setMenuItems(response.data);
+      const res = await api.get('/menu');
+      const data = res?.data?.data;
+      if (res?.data?.success && Array.isArray(data)) {
+        setMenuItems(data as MenuItem[]);
+      } else {
+        setMenuItems([]);
       }
-    } catch {
-      toast.error('ไม่สามารถโหลดเมนูได้');
+    } catch (error: any) {
+      console.error(error);
+      setMenuItems([]);
     }
   };
 
   const fetchPromotions = async () => {
     try {
-      const response = await apiConfig.promotion.getAll();
+      const response = await promotionAPI.list(true);
       if (response?.success && Array.isArray(response.data)) {
-        setPromotions(response.data.filter((p: Promotion) => p.active));
+        setPromotions(response.data);
+      } else {
+        setPromotions([]);
       }
-    } catch {
-      toast.error('ไม่สามารถโหลดโปรโมชั่นได้');
+    } catch (error: any) {
+      console.error(error);
+      setPromotions([]);
     }
   };
 
-  const categories = [
-    'ทั้งหมด',
-    ...Array.from(new Set(menuItems.map((item) => item.category))),
-  ];
+  const categories = ['ทั้งหมด', ...Array.from(new Set(menuItems.map((i) => i.category ?? 'อื่น ๆ')))];
 
-  const filteredMenuItems =
-    selectedCategory === 'ทั้งหมด'
-      ? menuItems.filter((item) => item.available)
-      : menuItems.filter(
-          (item) => item.category === selectedCategory && item.available
-        );
+  const filteredMenu = selectedCategory === 'ทั้งหมด'
+    ? menuItems
+    : menuItems.filter((i) => (i.category ?? 'อื่น ๆ') === selectedCategory);
 
-  const handlePayment = () => {
-    if (items.length === 0) {
-      toast.error('กรุณาเลือกสินค้าก่อนชำระเงิน');
+  const handlePay = () => {
+    if (!items.length) {
+      toast.error('กรุณาเลือกสินค้า');
       return;
     }
     setShowPaymentConfirmation(true);
@@ -114,10 +179,8 @@ const OrderPage: React.FC = () => {
     try {
       setShowPaymentConfirmation(false);
       setIsSubmitting(true);
-      setLoading(true);
 
-      const { items: cartItems, selectedPromotion: promo } =
-        useCartStore.getState();
+      const { items: cartItems, selectedPromotion: promo } = useCartStore.getState();
 
       if (!Array.isArray(cartItems) || cartItems.length === 0) {
         toast.error('ไม่มีรายการสินค้า');
@@ -125,10 +188,23 @@ const OrderPage: React.FC = () => {
       }
 
       const payload = {
-        items: cartItems.map((it) => ({
+        items: cartItems.map((it: CartItem) => ({
           menuItemId: Number(it.menuItemId),
           price: Number(it.price),
           quantity: Number(it.quantity),
+          // แนบข้อมูล sweetness/toppings ลง note แบบ JSON string
+          note: JSON.stringify({
+            sweetness: it.sweetness ?? 'normal',
+            toppings: (it.toppings ?? []).map((t: Topping) => ({
+              id: t.id,
+              name: t.name,
+              price: t.price,
+            })),
+            toppingsTotal: (it.toppings ?? []).reduce<number>(
+              (s: number, t: Topping) => s + Number(t.price || 0),
+              0
+            ),
+          }),
         })),
         promotionId: promo ? Number(promo.id) : null,
         taxAmount: 0,
@@ -141,61 +217,60 @@ const OrderPage: React.FC = () => {
         throw new Error(res?.error || 'สร้างออเดอร์ไม่สำเร็จ');
       }
 
-      // 🔒 normalize ก่อนเซ็ต state กันรูปทรงแปลก ๆ
       const normalized = normalizeOrderForUI(res.data);
       if (!Array.isArray(normalized.items)) normalized.items = [];
 
       setCompletedOrder(normalized);
+      clearCart();
       setShowReceipt(true);
-
       toast.success('ชำระเงินสำเร็จ');
-      useCartStore.getState().clearCart();
     } catch (err: any) {
+      console.error(err);
       toast.error(err?.message || 'เกิดข้อผิดพลาด');
     } finally {
       setIsSubmitting(false);
-      setLoading(false);
+    }
+  };
+
+  const removeFromCart = (menuItemId: number, variantKey?: string) => {
+    removeItem(menuItemId, variantKey);
+  };
+
+  const updateItemQty = (menuItemId: number, qty: number, variantKey?: string) => {
+    if (qty <= 0) {
+      removeItem(menuItemId, variantKey);
+    } else {
+      updateQuantity(menuItemId, qty, variantKey);
     }
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 h-full">
-      {/* Menu Section */}
-      <div className="flex-1 order-2 lg:order-1">
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">
-            เมนูเครื่องดื่ม
-          </h2>
-
-          {/* Category Filter */}
-          <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto pb-2">
-            {categories.map((category) => (
+    <div className="max-w-6xl mx-auto p-4 md:p-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* เมนูฝั่งซ้าย */}
+        <div className="md:col-span-2">
+          <div className="mb-4 flex gap-2 flex-wrap">
+            {categories.map((cat) => (
               <button
-                key={category}
-                onClick={() => setSelectedCategory(category)}
-                className={`px-3 sm:px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors text-sm sm:text-base ${
-                  selectedCategory === category
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-3 py-1.5 rounded-full border text-sm ${
+                  selectedCategory === cat ? 'border-black' : 'border-gray-300'
                 }`}
               >
-                {category}
+                {cat}
               </button>
             ))}
           </div>
 
-          {/* Menu Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">
-            {filteredMenuItems.map((item) => {
-              // รองรับทั้ง item.image และ item.image_url ที่ backend อาจส่งมา
-              const rawImg = (item as any).image ?? (item as any).image_url ?? '';
-              const imgSrc = rawImg ? toAbsoluteUrl(String(rawImg)) : '';
-
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+            {filteredMenu.map((item) => {
+              const imgSrc = toAbsoluteUrl(item.image);
               return (
                 <div
                   key={item.id}
                   className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => addItem(item)}
+                  onClick={() => openCustomize(item)}
                 >
                   <div className="aspect-square bg-gray-100 rounded-lg mb-2 sm:mb-3 flex items-center justify-center">
                     {imgSrc ? (
@@ -204,32 +279,20 @@ const OrderPage: React.FC = () => {
                         alt={item.name}
                         className="w-full h-full object-cover rounded-lg"
                         onError={(e) => {
-                          // กันรูป 404 แล้ว alt ไม่ขึ้น
                           (e.currentTarget as HTMLImageElement).style.display = 'none';
                         }}
                       />
                     ) : (
-                      <div className="text-gray-400 text-2xl sm:text-4xl">🥤</div>
+                      <span className="text-gray-400 text-sm">No image</span>
                     )}
                   </div>
-                  <h3 className="font-semibold text-gray-800 mb-1 text-sm sm:text-base line-clamp-1">
-                    {item.name}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-gray-600 mb-2 line-clamp-2">
-                    {item.description}
-                  </p>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm sm:text-lg font-bold text-primary-600">
-                      ฿{toNum(item.price).toFixed(2)}
-                    </span>
-                    <button
-                      className="bg-primary-600 text-white p-1.5 sm:p-2 rounded-lg hover:bg-primary-700 transition-colors"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        addItem(item);
-                      }}
-                    >
-                      <Plus className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <div>
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-sm text-gray-500">฿{toNum(item.price).toFixed(2)}</div>
+                    </div>
+                    <button className="p-2 rounded-full hover:bg-gray-100">
+                      <Plus size={18} />
                     </button>
                   </div>
                 </div>
@@ -237,165 +300,183 @@ const OrderPage: React.FC = () => {
             })}
           </div>
         </div>
-      </div>
 
-      {/* Cart Section */}
-      <div className="w-full lg:w-80 xl:w-96 order-1 lg:order-2">
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6 lg:sticky lg:top-6">
-          <div className="flex items-center gap-2 mb-4 sm:mb-6">
-            <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 text-primary-600" />
-            <h3 className="text-lg sm:text-xl font-bold text-gray-800">
-              รายการสั่งซื้อ
-            </h3>
-          </div>
-
-          {items.length === 0 ? (
-            <div className="text-center py-8 sm:py-12">
-              <div className="text-gray-400 text-4xl sm:text-6xl mb-3 sm:mb-4">
-                🛒
-              </div>
-              <p className="text-gray-500 text-sm sm:text-base">
-                ไม่มีสินค้าในตะกร้า
-              </p>
+        {/* ตะกร้าฝั่งขวา */}
+        <div className="md:col-span-1">
+          <div className="bg-white border border-gray-200 rounded-lg p-4 sticky top-4">
+            <div className="flex items-center gap-2 mb-3">
+              <ShoppingCart size={18} />
+              <div className="font-semibold">ตะกร้าสินค้า</div>
             </div>
-          ) : (
-            <>
-              {/* Cart Items */}
-              <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 max-h-48 sm:max-h-64 lg:max-h-80 overflow-y-auto">
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center gap-2 sm:gap-3 p-2 sm:p-3 bg-gray-50 rounded-lg"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-medium text-gray-800 text-sm sm:text-base line-clamp-1">
-                        {item.menuItem?.name ?? `เมนู #${item.menuItemId}`}
-                      </h4>
-                      <p className="text-xs sm:text-sm text-gray-600">
-                        ฿{Number(item.price).toFixed(2)}
-                      </p>
+
+            {items.length === 0 ? (
+              <div className="text-sm text-gray-500">ยังไม่มีสินค้าในตะกร้า</div>
+            ) : (
+              <div className="space-y-3">
+                {items.map((it) => (
+                  <div key={`${it.menuItemId}-${it.variantKey ?? 'default'}`} className="flex items-start justify-between">
+                    <div>
+                      <div className="font-medium">{it.menuItem?.name}</div>
+                      {(it.sweetness || (it.toppings && it.toppings.length)) && (
+                        <div className="text-xs text-gray-500">
+                          {it.sweetness && `• ${SWEETNESS.find(s => s.key === it.sweetness)?.label ?? ''}`}{' '}
+                          {it.toppings && it.toppings.length > 0 && `• ${it.toppings.map((t) => t.name).join(', ')}`}
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-400">
+                        ฿{toNum(it.price).toFixed(2)} x {toNum(it.quantity)}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 sm:gap-2">
+                    <div className="flex items-center gap-2">
                       <button
-                        onClick={() =>
-                          updateQuantity(
-                            item.menuItemId,
-                            Number(item.quantity) - 1
-                          )
-                        }
-                        className="p-1 text-gray-600 hover:text-gray-800"
+                        className="p-1 rounded hover:bg-gray-100"
+                        onClick={() => updateItemQty(it.menuItemId, it.quantity - 1, it.variantKey)}
                       >
-                        <Minus className="w-3 h-3 sm:w-4 sm:h-4" />
-                      </button>
-                      <span className="font-medium w-6 sm:w-8 text-center text-sm sm:text-base">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() =>
-                          updateQuantity(
-                            item.menuItemId,
-                            Number(item.quantity) + 1
-                          )
-                        }
-                        className="p-1 text-gray-600 hover:text-gray-800"
-                      >
-                        <Plus className="w-3 h-3 sm:w-4 sm:h-4" />
+                        <Minus size={16} />
                       </button>
                       <button
-                        onClick={() => removeItem(item.menuItemId)}
-                        className="p-1 text-red-600 hover:text-red-800 ml-1 sm:ml-2"
+                        className="p-1 rounded hover:bg-gray-100"
+                        onClick={() => updateItemQty(it.menuItemId, it.quantity + 1, it.variantKey)}
                       >
-                        <Trash2 className="w-3 h-3 sm:w-4 sm:h-4" />
+                        <Plus size={16} />
+                      </button>
+                      <button
+                        className="p-1 rounded hover:bg-gray-100"
+                        onClick={() => removeFromCart(it.menuItemId, it.variantKey)}
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
                 ))}
               </div>
+            )}
 
-              {/* Promotion Selection */}
-              <div className="mb-4 sm:mb-6">
-                <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
-                  โปรโมชั่น
-                </label>
-                <select
-                  value={selectedPromotion ? String(selectedPromotion.id) : ''}
-                  onChange={(e) => {
-                    const promo = promotions.find(
-                      (p) => String(p.id) === e.target.value
-                    );
-                    applyPromotion(promo);
-                  }}
-                  className="w-full p-2 sm:p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm sm:text-base"
-                >
-                  <option value="">ไม่ใช้โปรโมชั่น</option>
-                  {promotions.map((promo) => (
-                    <option key={String(promo.id)} value={String(promo.id)}>
-                      {promo.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="border-t my-3" />
 
-              {/* Order Summary */}
-              <div className="space-y-1.5 sm:space-y-2 mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-50 rounded-lg">
-                <div className="flex justify-between text-sm sm:text-base">
-                  <span>ยอดรวม</span>
-                  <span>฿{subtotal.toFixed(2)}</span>
-                </div>
-                {discount > 0 && (
-                  <div className="flex justify-between text-green-600 text-sm sm:text-base">
-                    <span>ส่วนลด</span>
-                    <span>-฿{discount.toFixed(2)}</span>
-                  </div>
-                )}
-                <hr className="my-1.5 sm:my-2" />
-                <div className="flex justify-between font-bold text-base sm:text-lg">
-                  <span>ยอดสุทธิ</span>
-                  <span className="text-primary-600">฿{total.toFixed(2)}</span>
-                </div>
-              </div>
+            {/* โปรโมชั่น */}
+            <div className="mb-3">
+              <div className="text-sm font-medium mb-1">โปรโมชั่น</div>
+              <select
+                className="w-full border rounded px-2 py-1.5 text-sm"
+                value={selectedPromotion ? String(selectedPromotion.id) : ''} // ไม่ส่ง null
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const p = promotions.find((x) => String(x.id) === id);
+                  applyPromotion(p);
+                }}
+              >
+                <option value="">-- ไม่ใช้โปรโมชั่น --</option>
+                {promotions.map((p) => (
+                  <option key={p.id} value={String(p.id)}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-              {/* Action Buttons */}
-              <div className="space-y-2 sm:space-y-3">
-                <button
-                  onClick={handlePayment}
-                  disabled={isSubmitting}
-                  className="w-full btn-primary flex items-center justify-center gap-2 py-2.5 sm:py-3 text-sm sm:text-base"
-                >
-                  <Receipt className="w-4 h-4 sm:w-5 sm:h-5" />
-                  ชำระเงิน
-                </button>
-                <button
-                  onClick={clearCart}
-                  disabled={isSubmitting}
-                  className="w-full btn-secondary py-2 sm:py-2.5 text-sm sm:text-base"
-                >
-                  ล้างรายการ
-                </button>
-              </div>
-            </>
-          )}
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between"><span>ยอดรวม</span><span>฿{toNum(subtotal).toFixed(2)}</span></div>
+              <div className="flex justify-between text-green-600"><span>ส่วนลด</span><span>-฿{toNum(discount).toFixed(2)}</span></div>
+              <div className="flex justify-between font-semibold"><span>สุทธิ</span><span>฿{toNum(total).toFixed(2)}</span></div>
+            </div>
+
+            <button
+              className="w-full mt-4 bg-black text-white py-2.5 rounded-lg disabled:opacity-50"
+              onClick={handlePay}
+              disabled={isSubmitting || items.length === 0}
+            >
+              <Receipt className="inline-block mr-2" size={16} />
+              ชำระเงิน
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Payment Confirmation Modal */}
       {showPaymentConfirmation && (
         <PaymentConfirmation
           items={items}
           subtotal={subtotal}
           discount={discount}
           total={total}
-          promotion={selectedPromotion}
           onConfirm={handleConfirmPayment}
           onCancel={() => setShowPaymentConfirmation(false)}
-          loading={loading || isSubmitting}
         />
       )}
 
-      {/* Receipt Modal */}
+      {/* โมดัลปรับแต่ง */}
+      {customizingItem && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50">
+          <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-semibold">เลือกปรับแต่ง: {customizingItem.name}</h3>
+              <button className="text-gray-500 hover:text-black" onClick={() => setCustomizingItem(null)}>✕</button>
+            </div>
+
+            <div className="mb-4">
+              <div className="font-medium mb-2">ระดับความหวาน</div>
+              <div className="grid grid-cols-2 gap-2">
+                {SWEETNESS.map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setSelectedSweetness(opt.key)}
+                    className={
+                      'border rounded-lg px-3 py-2 text-sm ' +
+                      (selectedSweetness === opt.key ? 'border-black' : 'border-gray-300')
+                    }
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="font-medium mb-2">ท็อปปิ้ง (คิดเพิ่มตามราคา)</div>
+              <div className="grid grid-cols-2 gap-2">
+                {TOPPINGS.map((tp: Topping) => {
+                  const active = !!selectedToppings.find(t => t.id === tp.id);
+                  return (
+                    <button
+                      key={tp.id}
+                      onClick={() => toggleTopping(tp)}
+                      className={
+                        'border rounded-lg px-3 py-2 text-sm flex items-center justify-between ' +
+                        (active ? 'border-black' : 'border-gray-300')
+                      }
+                    >
+                      <span>{tp.name}</span>
+                      <span className="text-xs opacity-70">+{tp.price}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-600">
+                ราคารวม:{' '}
+                {(
+                  Number(customizingItem.price) +
+                  selectedToppings.reduce<number>(
+                    (s: number, t: Topping) => s + Number(t.price || 0),
+                    0
+                  )
+                ).toFixed(2)}
+              </div>
+              <div className="space-x-2">
+                <button className="px-4 py-2 rounded-lg border" onClick={() => setCustomizingItem(null)}>ยกเลิก</button>
+                <button className="px-4 py-2 rounded-lg bg-black text-white" onClick={confirmCustomize}>เพิ่มลงตะกร้า</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ใบเสร็จ */}
       {showReceipt && completedOrder && (
         <ReceiptModal
-          order={completedOrder} // normalized object
+          order={completedOrder}
           onClose={() => setShowReceipt(false)}
         />
       )}

@@ -132,7 +132,7 @@ export const promotionAPI = {
 /* ===================== ORDERS ===================== */
 export const orderAPI = {
   create: (payload: {
-    items: { menuItemId: number; price: number; quantity: number }[];
+    items: { menuItemId: number; price: number; quantity: number; note?: string }[];
     promotionId?: number | null;
     taxAmount?: number;
     serviceCharge?: number;

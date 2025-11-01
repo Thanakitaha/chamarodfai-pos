@@ -1,87 +1,55 @@
+// src/components/PaymentConfirmation.tsx
 import React from 'react';
-import { CartItem } from '../stores/cartStore';
-import { Promotion } from '../types';
+import type { CartItem } from '../types';
 
 type Props = {
   items: CartItem[];
   subtotal: number;
   discount: number;
   total: number;
-  promotion?: Promotion;
-  loading?: boolean;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 };
 
 const PaymentConfirmation: React.FC<Props> = ({
-  items,
-  subtotal,
-  discount,
-  total,
-  promotion,
-  loading = false,
-  onConfirm,
-  onCancel,
+  items, subtotal, discount, total, onConfirm, onCancel,
 }) => {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg bg-white rounded-xl shadow-lg">
-        <div className="px-5 py-4 border-b">
-          <h3 className="text-lg font-semibold">ยืนยันการชำระเงิน</h3>
-        </div>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-4 sm:p-6 w-full max-w-md">
+        <h3 className="text-lg font-semibold mb-3">ยืนยันการชำระเงิน</h3>
 
-        <div className="px-5 py-4 space-y-3 max-h-[60vh] overflow-y-auto">
-          <div className="space-y-2">
-            {items.map((it) => (
-              <div key={it.menuItemId} className="flex justify-between text-sm">
-                <div className="truncate">
-                  {it.menuItem?.name ?? `เมนู #${it.menuItemId}`} × {it.quantity}
-                </div>
-                <div>฿{(Number(it.price) * Number(it.quantity)).toFixed(2)}</div>
+        <div className="max-h-56 overflow-auto border rounded-lg mb-3 p-2">
+          {items.map((it) => (
+            <div
+              key={`${it.menuItemId}-${it.variantKey ?? 'default'}`}
+              className="flex justify-between text-sm py-1"
+            >
+              <div>
+                <div className="font-medium">{it.menuItem?.name}</div>
+                {(it.sweetness || (it.toppings && it.toppings.length)) && (
+                  <div className="text-xs text-gray-500">
+                    {it.sweetness ? `• ${it.sweetness}` : ''}
+                    {it.toppings && it.toppings.length > 0
+                      ? ` • ${it.toppings.map(t => t.name).join(', ')}`
+                      : ''}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-
-          <hr />
-
-          <div className="flex justify-between text-sm">
-            <span>ยอดรวม</span>
-            <span>฿{subtotal.toFixed(2)}</span>
-          </div>
-
-          {promotion && discount > 0 && (
-            <div className="flex justify-between text-sm text-green-600">
-              <span>
-                ส่วนลด {promotion.name}
-                {promotion.discountType === 'percentage'
-                  ? ` (${promotion.discountValue}%)`
-                  : ''}
-              </span>
-              <span>-฿{discount.toFixed(2)}</span>
+              <div>฿{(Number(it.price) * Number(it.quantity)).toFixed(2)}</div>
             </div>
-          )}
-
-          <div className="flex justify-between font-semibold text-base">
-            <span>ยอดสุทธิ</span>
-            <span className="text-primary-600">฿{total.toFixed(2)}</span>
-          </div>
+          ))}
         </div>
 
-        <div className="px-5 py-4 border-t flex gap-2">
-          <button
-            onClick={onCancel}
-            disabled={loading}
-            className="flex-1 border rounded-lg py-2 hover:bg-gray-50 disabled:opacity-60"
-          >
-            ยกเลิก
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={loading}
-            className="flex-1 rounded-lg py-2 bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60"
-          >
-            {loading ? 'กำลังชำระเงิน…' : 'ยืนยันชำระเงิน'}
-          </button>
+        <div className="space-y-1 text-sm">
+          <div className="flex justify-between"><span>ยอดรวม</span><span>฿{Number(subtotal).toFixed(2)}</span></div>
+          <div className="flex justify-between text-green-600"><span>ส่วนลด</span><span>-฿{Number(discount).toFixed(2)}</span></div>
+          <div className="flex justify-between font-semibold"><span>สุทธิ</span><span>฿{Number(total).toFixed(2)}</span></div>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="px-4 py-2 rounded-lg border" onClick={onCancel}>ยกเลิก</button>
+          <button className="px-4 py-2 rounded-lg bg-black text-white" onClick={onConfirm}>ยืนยัน</button>
         </div>
       </div>
     </div>
