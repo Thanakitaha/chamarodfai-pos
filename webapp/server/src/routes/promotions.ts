@@ -16,35 +16,58 @@ router.get('/', async (req, res, next) => {
 // POST /api/promotions
 router.post('/', async (req, res, next) => {
   try {
-    const created = await svc.createPromotion(req.body);
-    res.status(201).json({ success: true, data: created });
-  } catch (e: any) {
-    res.status(400).json({ success: false, error: e.message || 'Invalid payload' });
-  }
+    const id = await svc.createPromotion({
+      name: req.body.name,
+      description: req.body.description ?? null,
+      discountType: req.body.discountType,
+      discountValue: Number(req.body.discountValue ?? 0),
+      minOrderAmount: req.body.minOrderAmount ?? null,
+      startDate: req.body.startDate,
+      endDate: req.body.endDate,
+      active: Boolean(req.body.active ?? true),
+    });
+    res.json({ success: true, data: { id } });
+  } catch (e) { next(e); }
 });
 
 // PUT /api/promotions/:id
 router.put('/:id', async (req, res, next) => {
   try {
-    const ok = await svc.updatePromotion(Number(req.params.id), req.body);
-    if (!ok) return res.status(404).json({ success:false, error:'Promotion not found' });
+    const ok = await svc.updatePromotion(Number(req.params.id), {
+      name: req.body.name,
+      description: req.body.description ?? null,
+      discountType: req.body.discountType,
+      discountValue: Number(req.body.discountValue ?? 0),
+      minOrderAmount: req.body.minOrderAmount ?? null,
+      startDate: req.body.startDate,
+      endDate: req.body.endDate,
+      active: Boolean(req.body.active ?? true),
+    });
+    if (!ok) return res.status(404).json({ success: false, error: 'Promotion not found' });
     res.json({ success: true, message: 'Updated' });
-  } catch (e: any) {
-    res.status(400).json({ success: false, error: e.message || 'Invalid payload' });
-  }
+  } catch (e) { next(e); }
 });
 
 // DELETE /api/promotions/:id
 router.delete('/:id', async (req, res, next) => {
   try {
     const ok = await svc.deletePromotion(Number(req.params.id));
-    if (!ok) return res.status(404).json({ success:false, error:'Promotion not found' });
+    if (!ok) return res.status(404).json({ success: false, error: 'Promotion not found' });
     res.json({ success: true, message: 'Deleted' });
   } catch (e) { next(e); }
 });
 
-// PATCH /api/promotions/:id/toggle
+// PATCH /api/promotions/:id/toggle  (ของเดิม)
 router.patch('/:id/toggle', async (req, res, next) => {
+  try {
+    const active = await svc.togglePromotion(Number(req.params.id));
+    if (active === null) return res.status(404).json({ success:false, error:'Promotion not found' });
+    res.json({ success: true, data: { active } });
+  } catch (e) { next(e); }
+});
+
+// ✅ เพิ่ม POST ให้รองรับ client ที่เรียก POST
+router.post('/:id/toggle', async (req, res, next) => {
   try {
     const active = await svc.togglePromotion(Number(req.params.id));
     if (active === null) return res.status(404).json({ success:false, error:'Promotion not found' });

@@ -79,7 +79,7 @@ export const promotionAPI = {
     unwrap<{ message: string }>(api.delete(`/promotions/${id}`)),
 
   toggle: (id: number) =>
-    unwrap<{ active: boolean }>(api.post(`/promotions/${id}/toggle`, {})),
+    unwrap<{ active: boolean }>(api.patch(`/promotions/${id}/toggle`, {})),
 };
 
 /* ===================== ORDERS ===================== */
