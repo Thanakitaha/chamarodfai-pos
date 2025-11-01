@@ -12,33 +12,83 @@ type LocalMenuItem = {
 type LocalPromotion = {
   id: number | string;
   active: boolean;
+  // รองรับสองสกุลชื่อ field
+  discountType?: 'percentage' | 'fixed';
+  discount_value?: number;
+  discountValue?: number;
+  minOrderAmount?: number | null;
+  min_order_amount?: number | null;
+  startDate?: string;
+  start_at?: string;
+  endDate?: string;
+  end_at?: string;
   [k: string]: any;
 };
 
 type LocalTopping = { id: string; name: string; price: number };
-
 type LocalCartItem = {
-  id: number;
   menuItemId: number;
   price: number;
   quantity: number;
-  menuItem?: LocalMenuItem;
+  menuItem?: { name?: string | null };
+  variantKey?: string;
   sweetness?: 'extra' | 'normal' | 'less' | 'none';
   toppings?: LocalTopping[];
-  variantKey?: string;
 };
 
-// 👇 แก้ TS6133: ใช้ชื่อ `_subtotal` เพื่อสื่อว่าไม่ถูกใช้งาน
-function computePromotionDiscount(_subtotal: number, promo?: LocalPromotion | undefined): number {
-  if (!promo || !promo.active) return 0;
-  // TODO: เติมตรรกะโปรโมชันจริงของคุณ
+// ---------- helpers ----------
+const toNum = (n: any, fb = 0) => {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : fb;
+};
+const round2 = (n: any) => Math.round((toNum(n) + Number.EPSILON) * 100) / 100;
+
+function isWithin(p: LocalPromotion): boolean {
+  // เช็คช่วงเวลาโปร (ถ้าส่งมา)
+  const now = new Date();
+  const startStr = p.startDate ?? (p as any).start_at;
+  const endStr = p.endDate ?? (p as any).end_at;
+  if (startStr) {
+    const st = new Date(startStr);
+    if (isFinite(+st) && now < st) return false;
+  }
+  if (endStr) {
+    const ed = new Date(endStr);
+    if (isFinite(+ed) && now > ed) return false;
+  }
+  return true;
+}
+
+// คำนวณส่วนลดตามรูปแบบเดียวกับฝั่ง server (percent/fixed + minOrder + ช่วงเวลา + active)
+function computePromotionDiscount(subtotal: number, promo?: LocalPromotion): number {
+  if (!promo) return 0;
+  if (promo.active === false) return 0;
+  if (!isWithin(promo)) return 0;
+
+  const minOrder =
+    promo.minOrderAmount ?? (promo as any).min_order_amount ?? null;
+  if (minOrder != null && subtotal < toNum(minOrder)) return 0;
+
+  const t =
+    (promo.discountType as string) ??
+    String((promo as any).discount_type ?? '');
+  const v = toNum(promo.discountValue ?? (promo as any).discount_value, 0);
+
+  const typ = String(t || '').toLowerCase();
+  if (typ === 'percent' || typ === 'percentage') {
+    return Math.max(0, round2(subtotal * (v / 100)));
+  }
+  if (typ === 'fixed') {
+    return Math.min(subtotal, Math.max(0, round2(v)));
+  }
   return 0;
 }
 
 function recalc(items: LocalCartItem[], promo?: LocalPromotion) {
-  const subtotal = items.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
-  const discount = computePromotionDiscount(subtotal, promo);
-  return { subtotal, discount, total: subtotal - discount };
+  const subtotal = round2(items.reduce((s, it) => s + toNum(it.price) * toNum(it.quantity), 0));
+  const discount = round2(computePromotionDiscount(subtotal, promo));
+  const total = round2(subtotal - discount);
+  return { subtotal, discount, total };
 }
 
 type CartState = {
@@ -69,26 +119,28 @@ export const useCartStore = create<CartState>((set, get) => ({
   total: 0,
 
   addItem: (menuItem) => {
-    const list = get().items.slice();
+    let list = get().items.slice();
     const variantKey = (menuItem.variantKey ?? `v|${menuItem.id}`);
+
+    // หา existing ตาม menuItemId + variantKey
     const idx = list.findIndex(
-      (x) => x.menuItemId === Number(menuItem.id) && (x.variantKey ?? '') === variantKey
+      (x) => x.menuItemId === menuItem.id && (x.variantKey ?? 'default') === (variantKey ?? 'default'),
     );
 
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], quantity: list[idx].quantity + 1 };
-    } else {
-      const item: LocalCartItem = {
-        id: Number(menuItem.id),
-        menuItemId: Number(menuItem.id),
-        price: Number(menuItem.customPrice ?? menuItem.price),
+    const priceToUse = toNum(menuItem.customPrice ?? menuItem.price);
+    if (idx === -1) {
+      list.push({
+        menuItemId: menuItem.id,
+        price: priceToUse,
         quantity: 1,
-        menuItem,
-        sweetness: menuItem.sweetness,
-        toppings: menuItem.toppings,
+        menuItem: { name: menuItem.name },
         variantKey,
-      };
-      list.push(item);
+        sweetness: (menuItem as any).sweetness,
+        toppings: (menuItem as any).toppings,
+      });
+    } else {
+      list[idx].quantity = toNum(list[idx].quantity) + 1;
+      list[idx].price = priceToUse; // อัปเดตราคาให้ตรงกับ custom
     }
 
     const { selectedPromotion } = get();
@@ -97,9 +149,8 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   removeItem: (menuItemId, variantKey) => {
     let list = get().items.slice();
-    list = list.filter((x) =>
-      variantKey ? !(x.menuItemId === Number(menuItemId) && (x.variantKey ?? '') === variantKey)
-                 : x.menuItemId !== Number(menuItemId)
+    list = list.filter(
+      (x) => !(x.menuItemId === menuItemId && (x.variantKey ?? 'default') === (variantKey ?? 'default')),
     );
     const { selectedPromotion } = get();
     set({ items: list, ...recalc(list, selectedPromotion) });
@@ -107,12 +158,12 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   updateQuantity: (menuItemId, quantity, variantKey) => {
     let list = get().items.slice();
-    list = list.map((x) => {
-      const match = variantKey
-        ? x.menuItemId === Number(menuItemId) && (x.variantKey ?? '') === variantKey
-        : x.menuItemId === Number(menuItemId);
-      return match ? { ...x, quantity } : x;
-    });
+    const i = list.findIndex(
+      (x) => x.menuItemId === menuItemId && (x.variantKey ?? 'default') === (variantKey ?? 'default'),
+    );
+    if (i !== -1) {
+      list[i].quantity = toNum(quantity, 0);
+    }
     list = list.filter((x) => x.quantity > 0);
     const { selectedPromotion } = get();
     set({ items: list, ...recalc(list, selectedPromotion) });
