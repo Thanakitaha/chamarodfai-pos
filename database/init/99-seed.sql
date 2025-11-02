@@ -82,6 +82,28 @@ WHERE EXISTS (
 )
 ON CONFLICT (store_id, name) DO NOTHING;
 
+-- 6) เมนู ท็อปปิ้ง (วิปครีม, ครีมชีส) — ทำเมื่อมี category 'ท็อปปิ้ง'
+INSERT INTO pos.menu_items (store_id, category_id, name, price, cost, available, tax_rate)
+SELECT
+  s.store_id,
+  (SELECT category_id
+     FROM pos.menu_categories
+     WHERE store_id = s.store_id AND name = 'ท็อปปิ้ง'
+     ORDER BY category_id ASC LIMIT 1),
+  v.name, v.price, v.cost, TRUE, 0
+FROM (SELECT store_id FROM pos.stores ORDER BY store_id ASC LIMIT 1) s,
+     (VALUES
+        ('วิปครีม', 20.00, 10.00),
+        ('ครีมชีส',      15.00,  8.00),
+        ('ไข่มุก',      5.00,  2.00),
+        ('บุกบราวน์ชูการ์',      5.00,  2.00)
+     ) AS v(name, price, cost)
+WHERE EXISTS (
+  SELECT 1 FROM pos.menu_categories
+  WHERE store_id = s.store_id AND name = 'ท็อปปิ้ง'
+)
+ON CONFLICT (store_id, name) DO NOTHING;
+
 -- 5) บัญชีแอดมินตัวอย่าง (หนึ่งร้านหนึ่งอีเมล/ยูสเซอร์เนม)
 INSERT INTO pos.accounts (store_id, email, username, password_hash, role, is_active)
 SELECT s.store_id,
