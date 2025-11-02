@@ -101,25 +101,45 @@ export async function salesSummaryDaily(dateISO: string) {
 export async function salesTrend(days: number) {
   const { rows } = await pool.query(
     `
-    WITH d AS (
-      SELECT generate_series(
-        CURRENT_DATE - ($1::int - 1) * INTERVAL '1 day',
-        CURRENT_DATE,
-        INTERVAL '1 day'
-      )::date AS dte
-    )
     SELECT
-      d.dte AS date,
-      COALESCE(SUM(oi.total_price), 0)::numeric AS total_sales
-    FROM d
-    LEFT JOIN pos.orders o
-      ON (o.created_at AT TIME ZONE 'UTC')::date = d.dte
-    LEFT JOIN pos.order_items oi
-      ON oi.order_id = o.order_id
-    GROUP BY d.dte
-    ORDER BY d.dte ASC
+      date_trunc('day', o.created_at) AS day,
+      SUM(oi.total_price) AS sales,
+      COUNT(DISTINCT o.order_id) AS orders,
+      SUM(oi.quantity) AS items
+    FROM pos.orders o
+    JOIN pos.order_items oi ON oi.order_id = o.order_id
+    WHERE o.status = 'paid'
+      AND o.created_at >= $1 AND o.created_at < $2
+    GROUP BY 1
+    ORDER BY 1;
   `,
     [days]
   );
   return rows;
 }
+
+// export async function salesTrend(days: number) {
+//   const { rows } = await pool.query(
+//     `
+//     WITH d AS (
+//       SELECT generate_series(
+//         CURRENT_DATE - ($1::int - 1) * INTERVAL '1 day',
+//         CURRENT_DATE,
+//         INTERVAL '1 day'
+//       )::date AS dte
+//     )
+//     SELECT
+//       d.dte AS date,
+//       COALESCE(SUM(oi.total_price), 0)::numeric AS total_sales
+//     FROM d
+//     LEFT JOIN pos.orders o
+//       ON (o.created_at AT TIME ZONE 'UTC')::date = d.dte
+//     LEFT JOIN pos.order_items oi
+//       ON oi.order_id = o.order_id
+//     GROUP BY d.dte
+//     ORDER BY d.dte ASC
+//   `,
+//     [days]
+//   );
+//   return rows;
+// }

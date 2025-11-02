@@ -31,11 +31,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+      - ./backups:/backups
     environment:
       NODE_ENV: production
       PORT: ${PORT}
       STORE_ID: ${STORE_ID}
       DATABASE_URL: ${DATABASE_URL}
+      BACKUP_DIR: /backups 
     expose:
       - "${PORT}"
     healthcheck:
@@ -61,3 +65,4 @@ services:
 
 volumes:
   db_data:
+    name: pos_db_data

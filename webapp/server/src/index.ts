@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 
 import { pool } from './config/db';
+import adminRouter from './routes/admin';
 import authRouter from './routes/auth';
 import menuRouter from './routes/menu';
 import ordersRouter from './routes/orders';
@@ -119,6 +120,7 @@ app.get('/api/sheets/info', async (_req, res, next) => {
 
 // ---------- Routes ----------
 app.use('/api/auth', authRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api/menu-items', menuRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/promotions', promotionsRouter);
