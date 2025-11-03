@@ -5,6 +5,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import fs from 'fs';
 
 import { pool } from './config/db';
 import adminRouter from './routes/admin';
@@ -20,13 +21,29 @@ const app = express();
 
 // ---------- Middlewares ----------
 app.use(cors());
-app.use(cookieParser());                 // ✅ ต้องมีเพื่ออ่าน cookie 'session'
+app.use(cookieParser());              
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
-// ---------- Static for uploaded files ----------
+// ---------- Ensure persistent dirs (create if missing) ----------
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+const UPLOAD_MENUS_DIR = path.join(UPLOAD_DIR, 'menus');
+// NOTE: ตาม docker-compose ที่ให้มา ผูก backups เป็น /backups (ไม่ใช่ /app/backups)
+const BACKUPS_DIR = '/backups';
+
+[UPLOAD_DIR, UPLOAD_MENUS_DIR, BACKUPS_DIR].forEach((dir) => {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`Created missing dir: ${dir}`);
+    }
+  } catch (e) {
+    console.warn(`Cannot ensure dir ${dir}:`, (e as any)?.message || String(e));
+  }
+});
+
+// ---------- Static for uploaded files ----------
 app.use('/uploads', express.static(UPLOAD_DIR));
 
 // ---------- Helpers ----------
@@ -140,8 +157,8 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 
 // ---------- Start / Graceful shutdown ----------
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 API endpoints available at http://localhost:${PORT}/api`);
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`API endpoints available at http://localhost:${PORT}/api`);
 });
 
 const shutdown = async () => {
